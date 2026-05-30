@@ -250,8 +250,50 @@ def _extract_escalate_reason(state: ReviewState) -> dict:
 
 
 def compress_context(state: ReviewState) -> dict:
-    """Compress early-round tool results into a structured summary via LLM. (placeholder)"""
-    return {"compressed": True}
+    """Compress early-round tool results into a structured summary via LLM."""
+    from langchain_core.messages import SystemMessage, HumanMessage, RemoveMessage
+    from app.agent.prompts import COMPRESS_PROMPT
+
+    llm = _build_scan_llm()
+    messages = list(state["messages"])
+
+    # Find boundary: last AIMessage with tool_calls marks start of recent round
+    recent_start = len(messages)
+    for i in range(len(messages) - 1, -1, -1):
+        if hasattr(messages[i], "tool_calls") and messages[i].tool_calls:
+            recent_start = i
+            break
+
+    # Collect tool results from earlier rounds
+    early_tool_contents = []
+    for msg in messages[:recent_start]:
+        if isinstance(msg, ToolMessage) and msg.content:
+            early_tool_contents.append(msg.content)
+
+    if not early_tool_contents:
+        return {"compressed": True}
+
+    # Call LLM to compress
+    tool_results_text = "\n\n---\n\n".join(early_tool_contents)
+    response = llm.invoke([
+        SystemMessage(content=COMPRESS_PROMPT),
+        HumanMessage(content=tool_results_text),
+    ])
+
+    summary = response.content or ""
+    logger.info("context_compressed", original_parts=len(early_tool_contents), summary_len=len(summary))
+
+    # Build new message list using RemoveMessage to clear old, then add new
+    remove_msgs = [RemoveMessage(id=msg.id) for msg in messages if hasattr(msg, "id") and msg.id]
+
+    # Reconstruct: original prompts + compressed summary + recent round
+    new_messages = remove_msgs + [
+        SystemMessage(content=messages[0].content if messages and hasattr(messages[0], "content") else ""),
+        HumanMessage(content=messages[1].content if len(messages) > 1 and hasattr(messages[1], "content") else ""),
+        SystemMessage(content=f"[COMPRESSED CONTEXT FROM ROUNDS 1-{state['round_count'] - 1}]\n\n{summary}"),
+    ] + list(messages[recent_start:])
+
+    return {"messages": new_messages, "compressed": True}
 
 
 # ── Graph Assembly ─────────────────────────────────────
