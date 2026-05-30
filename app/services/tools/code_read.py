@@ -66,3 +66,45 @@ def search_code(repo: str, query: str, path_filter: str = None) -> str:
 def find_references(repo: str, symbol: str, path_filter: str = None) -> str:
     """Find all files that reference a given symbol (function, class, variable name)."""
     return search_code.invoke({"repo": repo, "query": symbol, "path_filter": path_filter})
+
+
+_DEFINITION_PATTERNS = [
+    "def {symbol}",
+    "class {symbol}",
+    "function {symbol}",
+    "const {symbol}",
+    "let {symbol}",
+    "var {symbol}",
+]
+
+_MAX_DEFINITION_RESULTS = 5
+
+
+@tool
+def find_definition(repo: str, symbol: str, path_filter: str = None) -> str:
+    """Find where a symbol (function, class, variable) is defined in the repository.
+
+    Args:
+        repo: Repository full name (owner/repo).
+        symbol: The symbol name to find the definition of.
+        path_filter: Optional path prefix to narrow the search.
+    """
+    pattern_query = " OR ".join(f'"{p.format(symbol=symbol)}"' for p in _DEFINITION_PATTERNS)
+    q = f"{pattern_query} repo:{repo}"
+    if path_filter:
+        q += f" path:{path_filter}"
+
+    try:
+        results = _github_client().search_code(q)
+    except Exception as e:
+        return f"Error searching for definition: {e}"
+
+    output = []
+    for i, item in enumerate(results):
+        if i >= _MAX_DEFINITION_RESULTS:
+            break
+        output.append(f"- {item.path}")
+
+    if not output:
+        return f"No definition found for '{symbol}'."
+    return f"Possible definitions of '{symbol}':\n" + "\n".join(output)
