@@ -55,3 +55,18 @@ Return your review as JSON:
 
 Return ONLY valid JSON. No markdown fences.
 """
+
+COMPRESS_PROMPT = """\
+Summarize the following tool call results collected during a code review.
+
+Preserve ALL of the following in your summary:
+- File names and paths mentioned
+- Line numbers referenced
+- Function/class signatures found
+- Risk signals or concerns identified
+- Specific findings or issues discovered
+- PR metadata (title, author, changed files list)
+
+Output a structured summary organized by topic (PR overview, code changes, findings). \
+Be concise but do not drop any actionable detail.
+"""
