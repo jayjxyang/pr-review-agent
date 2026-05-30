@@ -7,6 +7,7 @@ from app.core.logging import get_logger
 from app.agent import build_review_graph
 from app.services.reviewer import post_review
 from app.services.github import get_pr_head_sha
+from app.services.persistence import save_review
 
 logger = get_logger(__name__)
 
@@ -24,7 +25,8 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
     End-to-end PR review using LangGraph agent:
     1. Build graph and invoke with PR context
     2. Graph handles: scan → risk assessment → optional escalation
-    3. Post review to GitHub
+    3. Persist results to PostgreSQL
+    4. Post review to GitHub
     """
     log = logger.bind(repo=repo_full_name, pr=pr_number, task_id=self.request.id)
     log.info("review_started", attempt=self.request.retries + 1)
@@ -48,6 +50,7 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "round_count": 0,
             "total_input_tokens": 0,
             "tool_call_history": [],
+            "traces": [],
         })
 
         log.info(
@@ -55,7 +58,11 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             risk=result["risk_level"],
             escalated=result["escalated"],
             comments=len(result["comments"]),
+            traces=len(result.get("traces", [])),
         )
+
+        # Persist to PostgreSQL (non-blocking — failure here doesn't stop GitHub posting)
+        save_review(repo_full_name, pr_number, ref, result)
 
         # Post review to GitHub
         post_review(repo_full_name, pr_number, result)
