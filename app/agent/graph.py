@@ -11,6 +11,7 @@ Graph flow:
 """
 
 import json
+import hashlib
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
@@ -101,6 +102,22 @@ def parse_result(state: ReviewState) -> dict:
     }
 
 
+def post_tool_processing(state: ReviewState) -> dict:
+    """Record tool call fingerprints for dead loop detection."""
+    history = list(state.get("tool_call_history", []))
+
+    # Find the last AIMessage with tool_calls (the one that triggered scan_tools)
+    for msg in reversed(state["messages"]):
+        if hasattr(msg, "tool_calls") and msg.tool_calls:
+            for tc in msg.tool_calls:
+                params_str = json.dumps(tc.get("args", {}), sort_keys=True)
+                fingerprint = f"{tc['name']}:{hashlib.md5(params_str.encode()).hexdigest()[:8]}"
+                history.append(fingerprint)
+            break
+
+    return {"tool_call_history": history}
+
+
 def deep_review(state: ReviewState) -> dict:
     """One-shot deep review using the reason scenario (stronger model)."""
     llm = _build_reason_llm()
@@ -187,6 +204,12 @@ def tools_router(state: ReviewState) -> str:
         logger.warning("agent_token_budget_exceeded", tokens=state["total_input_tokens"])
         return "finish"
 
+    # Check for dead loop (3 consecutive identical tool calls)
+    history = state.get("tool_call_history", [])
+    if len(history) >= 3 and history[-1] == history[-2] == history[-3]:
+        logger.warning("dead_loop_detected", tool=history[-1])
+        return "finish"
+
     return "continue"
 
 
@@ -213,6 +236,7 @@ def build_review_graph() -> StateGraph:
     # Nodes
     graph.add_node("scan_call", scan_call)
     graph.add_node("scan_tools", ToolNode(ALL_TOOLS))
+    graph.add_node("post_tool_processing", post_tool_processing)
     graph.add_node("parse_result", parse_result)
     graph.add_node("extract_escalation", _extract_escalate_reason)
     graph.add_node("deep_review", deep_review)
@@ -225,7 +249,9 @@ def build_review_graph() -> StateGraph:
         "no_tool_calls": "parse_result",
     })
 
-    graph.add_conditional_edges("scan_tools", tools_router, {
+    graph.add_edge("scan_tools", "post_tool_processing")
+
+    graph.add_conditional_edges("post_tool_processing", tools_router, {
         "continue": "scan_call",
         "finish": "parse_result",
         "escalate": "extract_escalation",

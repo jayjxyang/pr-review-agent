@@ -47,6 +47,7 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "escalate_reason": "",
             "round_count": 0,
             "total_input_tokens": 0,
+            "tool_call_history": [],
         })
 
         log.info(

@@ -31,3 +31,5 @@ class ReviewState(TypedDict):
     # Loop control
     round_count: int
     total_input_tokens: int
+    # Dead loop detection
+    tool_call_history: list[str]
