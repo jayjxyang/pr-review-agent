@@ -288,8 +288,8 @@ def compress_context(state: ReviewState) -> dict:
 
     # Reconstruct: original prompts + compressed summary + recent round
     new_messages = remove_msgs + [
-        SystemMessage(content=messages[0].content if messages and hasattr(messages[0], "content") else ""),
-        HumanMessage(content=messages[1].content if len(messages) > 1 and hasattr(messages[1], "content") else ""),
+        SystemMessage(content=SCAN_SYSTEM_PROMPT),
+        HumanMessage(content=f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."),
         SystemMessage(content=f"[COMPRESSED CONTEXT FROM ROUNDS 1-{state['round_count'] - 1}]\n\n{summary}"),
     ] + list(messages[recent_start:])
 

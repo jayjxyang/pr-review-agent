@@ -319,12 +319,12 @@ class TestCompressRouter:
 
 class TestCompressContext:
     def _build_multi_round_state(self):
-        """Build a state simulating 5 rounds of tool calls."""
-        from langchain_core.messages import SystemMessage, HumanMessage
-        messages = [
-            SystemMessage(content="You are a reviewer"),
-            HumanMessage(content="Review PR #1"),
-        ]
+        """Build a state simulating 5 rounds of tool calls.
+
+        Note: SystemMessage and HumanMessage are injected inline by scan_call,
+        NOT stored in state. State messages start with AIMessage responses.
+        """
+        messages = []
         # Simulate 4 rounds of tool calls (early — will be compressed)
         for i in range(1, 5):
             messages.append(AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"path": f"file{i}.py"}, "id": str(i)}]))
@@ -350,6 +350,7 @@ class TestCompressContext:
     @patch("app.agent.graph._build_scan_llm")
     def test_reduces_message_count(self, mock_build_llm):
         from app.agent.graph import compress_context
+        from langchain_core.messages import RemoveMessage
         mock_llm = MagicMock()
         mock_response = MagicMock()
         mock_response.content = "Summary: reviewed 4 files, found no issues"
@@ -359,13 +360,12 @@ class TestCompressContext:
         state = self._build_multi_round_state()
         original_count = len(state["messages"])
         result = compress_context(state)
-        # New messages = RemoveMessages + 3 new (sys+human+summary) + 2 recent
-        # The total should include RemoveMessages (which are instructions, not content)
-        # But the net content messages should be fewer than original
-        content_msgs = [m for m in result["messages"] if not hasattr(m, 'id') or not isinstance(m, type(result["messages"][0]))]
-        # Just verify we got messages back and compressed flag is set
-        assert len(result["messages"]) > 0
-        assert result["compressed"] is True
+        # Count non-RemoveMessage messages (the actual content)
+        content_msgs = [m for m in result["messages"] if not isinstance(m, RemoveMessage)]
+        # Should be: SystemMessage + HumanMessage + CompressedSummary + 2 recent = 5
+        # Original was 10 (4 rounds * 2 + 1 round * 2)
+        assert len(content_msgs) < original_count
+        assert len(content_msgs) == 5  # sys + human + summary + recent AI + recent Tool
 
     @patch("app.agent.graph._build_scan_llm")
     def test_preserves_recent_round_messages(self, mock_build_llm):
