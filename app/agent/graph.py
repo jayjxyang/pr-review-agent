@@ -106,19 +106,35 @@ def parse_result(state: ReviewState) -> dict:
 
 
 def post_tool_processing(state: ReviewState) -> dict:
-    """Record tool call fingerprints for dead loop detection."""
+    """Record tool call fingerprints for dead loop detection and collect traces."""
     history = list(state.get("tool_call_history", []))
+    traces = list(state.get("traces", []))
 
     # Find the last AIMessage with tool_calls (the one that triggered scan_tools)
     for msg in reversed(state["messages"]):
         if hasattr(msg, "tool_calls") and msg.tool_calls:
             for tc in msg.tool_calls:
-                params_str = json.dumps(tc.get("args", {}), sort_keys=True)
+                params = tc.get("args", {})
+                params_str = json.dumps(params, sort_keys=True)
                 fingerprint = f"{tc['name']}:{hashlib.md5(params_str.encode()).hexdigest()[:8]}"
                 history.append(fingerprint)
+
+                # Find matching ToolMessage result for this tool call
+                result_summary = ""
+                for tmsg in state["messages"]:
+                    if isinstance(tmsg, ToolMessage) and tmsg.tool_call_id == tc.get("id"):
+                        result_summary = (tmsg.content or "")[:500]
+                        break
+
+                traces.append({
+                    "round_number": state["round_count"],
+                    "tool_name": tc["name"],
+                    "tool_params": params,
+                    "tool_result_summary": result_summary,
+                })
             break
 
-    return {"tool_call_history": history}
+    return {"tool_call_history": history, "traces": traces}
 
 
 def deep_review(state: ReviewState) -> dict:

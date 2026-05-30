@@ -33,3 +33,5 @@ class ReviewState(TypedDict):
     total_input_tokens: int
     # Dead loop detection
     tool_call_history: list[str]
+    # Agent traces (for persistence)
+    traces: list[dict]
