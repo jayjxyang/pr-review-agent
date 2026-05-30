@@ -1,11 +1,12 @@
+"""Celery task — orchestrates the full review pipeline using the LangGraph agent."""
+
 from celery import Task
+
 from app.core.celery_app import celery_app
-from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.services.chunker import chunk_diff
-from app.services.github import get_pr_patches
-from app.services.llm import ReviewResult, call_llm
+from app.agent import build_review_graph
 from app.services.reviewer import post_review
+from app.services.github import get_pr_head_sha
 
 logger = get_logger(__name__)
 
@@ -15,48 +16,52 @@ logger = get_logger(__name__)
     bind=True,
     ignore_result=True,
     max_retries=3,
-    default_retry_delay=60,  # seconds between retries
+    default_retry_delay=60,
     acks_late=True,
 )
 def run_review(self: Task, repo_full_name: str, pr_number: int):
     """
-    End-to-end PR review pipeline:
-    1. Fetch & filter PR diff (PyGithub)
-    2. Split diff into token-bounded chunks
-    3. Call LLM for each chunk, collect ReviewResults
-    4. Post aggregated review back to GitHub
+    End-to-end PR review using LangGraph agent:
+    1. Build graph and invoke with PR context
+    2. Graph handles: scan → risk assessment → optional escalation
+    3. Post review to GitHub
     """
     log = logger.bind(repo=repo_full_name, pr=pr_number, task_id=self.request.id)
     log.info("review_started", attempt=self.request.retries + 1)
 
     try:
-        # Phase 2 — fetch & chunk
-        patches = get_pr_patches(repo_full_name, pr_number)
-        if not patches:
-            log.info("review_skipped", reason="no reviewable files")
-            return
+        ref = get_pr_head_sha(repo_full_name, pr_number)
+        log.info("pr_ref_resolved", ref=ref)
 
-        chunks = chunk_diff(patches, token_limit=get_settings().diff_token_limit)
-        log.info("chunks_ready", total=len(chunks))
+        # Build and invoke graph
+        graph = build_review_graph()
+        result = graph.invoke({
+            "messages": [],
+            "repo": repo_full_name,
+            "pr_number": pr_number,
+            "ref": ref,
+            "risk_level": "",
+            "summary": "",
+            "comments": [],
+            "escalated": False,
+            "escalate_reason": "",
+            "round_count": 0,
+            "total_input_tokens": 0,
+        })
 
-        # Phase 3 — call LLM per chunk
-        results: list[ReviewResult] = []
-        for i, chunk in enumerate(chunks):
-            log.info("llm_call_start", chunk=i, tokens=chunk.token_count, files=len(chunk.files))
-            result = call_llm(chunk)
-            log.info("llm_call_done", chunk=i, comments=len(result.comments))
-            results.append(result)
+        log.info(
+            "agent_complete",
+            risk=result["risk_level"],
+            escalated=result["escalated"],
+            comments=len(result["comments"]),
+        )
 
-        # Phase 3 — post review back to GitHub
-        post_review(repo_full_name, pr_number, results)
+        # Post review to GitHub
+        post_review(repo_full_name, pr_number, result)
+        log.info("review_posted")
 
     except Exception as exc:
-        log.error(
-            "review_failed",
-            error=str(exc),
-            attempt=self.request.retries + 1,
-            max_retries=self.max_retries,
-        )
+        log.error("review_failed", error=str(exc), attempt=self.request.retries + 1)
         raise self.retry(exc=exc)
 
     log.info("review_completed")

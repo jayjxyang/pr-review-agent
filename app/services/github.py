@@ -102,3 +102,10 @@ def get_pr_patches(repo_full_name: str, pr_number: int) -> list[FilePatch]:
         skipped=skipped,
     )
     return patches
+
+
+def get_pr_head_sha(repo_full_name: str, pr_number: int) -> str:
+    """Get the HEAD commit SHA of the PR branch."""
+    gh = _github_client()
+    pr = gh.get_repo(repo_full_name).get_pull(pr_number)
+    return pr.head.sha
