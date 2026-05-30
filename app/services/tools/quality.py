@@ -47,3 +47,31 @@ def scan_secrets(repo: str, pr_number: int) -> str:
     if not findings:
         return "No secrets detected in the PR diff."
     return f"Potential secrets found ({len(findings)}):\n" + "\n".join(findings)
+
+
+@tool
+def check_test_coverage(repo: str, source_path: str, ref: str) -> str:
+    """Check if a source file has test references. Searches for imports/usages in test files.
+
+    Args:
+        repo: Repository full name (owner/repo).
+        source_path: Path to the source file to check.
+        ref: Git ref (branch or SHA).
+    """
+    module_name = source_path.split("/")[-1].replace(".py", "").replace(".ts", "").replace(".js", "")
+
+    q = f"{module_name} repo:{repo} path:test"
+    try:
+        results = _github_client().search_code(q)
+    except Exception as e:
+        return f"Error searching for test references: {e}"
+
+    output = []
+    for i, item in enumerate(results):
+        if i >= 10:
+            break
+        output.append(f"- {item.path}")
+
+    if not output:
+        return f"No test references found for '{source_path}'."
+    return f"Test files referencing '{module_name}':\n" + "\n".join(output)
