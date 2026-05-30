@@ -31,6 +31,8 @@ def _make_state(**overrides) -> dict:
         "round_count": 0,
         "total_input_tokens": 0,
         "tool_call_history": [],
+        "traces": [],
+        "compressed": False,
     }
     base.update(overrides)
     return base

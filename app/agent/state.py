@@ -35,3 +35,5 @@ class ReviewState(TypedDict):
     tool_call_history: list[str]
     # Agent traces (for persistence)
     traces: list[dict]
+    # Context compression
+    compressed: bool

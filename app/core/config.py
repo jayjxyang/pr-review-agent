@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Agent loop constraints
     max_rounds: int = 15
     max_input_tokens: int = 60000
+    compress_at_round: int = 5
 
 
 @lru_cache

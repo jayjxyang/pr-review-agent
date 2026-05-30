@@ -51,6 +51,7 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "total_input_tokens": 0,
             "tool_call_history": [],
             "traces": [],
+            "compressed": False,
         })
 
         log.info(
