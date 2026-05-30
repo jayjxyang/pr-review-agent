@@ -121,3 +121,24 @@ def get_last_review(repo: str, pr_number: int) -> dict | None:
     except Exception as exc:
         logger.warning("get_last_review_failed", error=str(exc), repo=repo, pr=pr_number)
         return None
+
+
+def resolve_comments(comment_ids: list[int]) -> None:
+    """Mark review comments as resolved by their IDs."""
+    if not comment_ids:
+        return
+    try:
+        session = SessionLocal()
+        try:
+            session.query(ReviewComment).filter(
+                ReviewComment.id.in_(comment_ids)
+            ).update({"resolved": True}, synchronize_session="fetch")
+            session.commit()
+            logger.info("comments_resolved", count=len(comment_ids))
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("resolve_comments_failed", error=str(exc))

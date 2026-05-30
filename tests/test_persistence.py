@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.core.database import Base
 from app.models.review import Review, ReviewComment, AgentTrace
-from app.services.persistence import save_review, get_last_review
+from app.services.persistence import save_review, get_last_review, resolve_comments
 
 
 def _setup_test_db(monkeypatch):
@@ -189,3 +189,42 @@ class TestGetLastReview:
 
         result = get_last_review("org/repo", 42)
         assert len(result["comments"]) == 20
+
+
+class TestResolveComments:
+    def test_marks_comments_as_resolved(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        review = Review(
+            repo="org/repo", pr_number=42, risk_level="medium",
+            summary="Issues", reviewed_sha="abc123",
+        )
+        session.add(review)
+        session.flush()
+        c1 = ReviewComment(
+            review_id=review.id, filename="a.py", line=10,
+            severity="warning", comment="Issue 1", resolved=False,
+        )
+        c2 = ReviewComment(
+            review_id=review.id, filename="b.py", line=20,
+            severity="error", comment="Issue 2", resolved=False,
+        )
+        session.add_all([c1, c2])
+        session.commit()
+        c1_id, c2_id = c1.id, c2.id
+        session.close()
+
+        resolve_comments([c1_id])
+
+        session = session_factory()
+        assert session.get(ReviewComment, c1_id).resolved is True
+        assert session.get(ReviewComment, c2_id).resolved is False
+        session.close()
+
+    def test_empty_list_is_noop(self, monkeypatch):
+        _setup_test_db(monkeypatch)
+        resolve_comments([])  # Should not raise
+
+    def test_ignores_invalid_ids(self, monkeypatch):
+        _setup_test_db(monkeypatch)
+        resolve_comments([9999])  # Should not raise
