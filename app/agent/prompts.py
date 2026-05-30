@@ -70,3 +70,21 @@ Preserve ALL of the following in your summary:
 Output a structured summary organized by topic (PR overview, code changes, findings). \
 Be concise but do not drop any actionable detail.
 """
+
+RE_REVIEW_ADDENDUM = """\
+
+## Re-review Context
+
+This PR was previously reviewed at commit {last_reviewed_sha}. The author has pushed new commits.
+Below you will find the incremental diff (changes since last review).
+
+### Prior Unresolved Comments
+{prior_comments}
+
+For EACH prior comment listed above, evaluate whether the new changes address it:
+- If FIXED: include in your finish_review comments as {{"filename": "...", "line": ..., "severity": "resolved", "comment": "Previously flagged issue has been addressed.", "prior_comment_id": <id>}}
+- If NOT FIXED and still relevant: re-flag it with the original severity
+- If the fix introduced a NEW problem: flag with a new comment explaining the regression
+
+Also review the new changes for any NEW issues not covered by prior comments.
+"""

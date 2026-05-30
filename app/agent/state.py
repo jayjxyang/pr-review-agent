@@ -37,3 +37,6 @@ class ReviewState(TypedDict):
     traces: list[dict]
     # Context compression
     compressed: bool
+    # Re-review context
+    prior_comments: list[dict]
+    last_reviewed_sha: str
