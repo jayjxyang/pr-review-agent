@@ -1,0 +1,238 @@
+"""LangGraph StateGraph — ReAct loop with risk-based escalation.
+
+Graph flow:
+  START → scan_call → scan_router
+    ├─ has_tool_calls → scan_tools → tools_router
+    │     ├─ continue     → scan_call (loop)
+    │     ├─ finish       → parse_result → END
+    │     ├─ escalate     → deep_review → END
+    │     └─ budget_exceeded → parse_result → END
+    └─ no_tool_calls → parse_result → END
+"""
+
+import json
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import ToolMessage
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+
+from app.core.config import get_settings
+from app.core.logging import get_logger
+from app.agent.state import ReviewState
+from app.agent.prompts import SCAN_SYSTEM_PROMPT, DEEP_REVIEW_PROMPT
+from app.services.tools import ALL_TOOLS
+from app.services.tools.control import FINISH_REVIEW_SIGNAL, ESCALATE_SIGNAL
+
+logger = get_logger(__name__)
+
+
+def _build_scan_llm() -> ChatOpenAI:
+    """Create ChatOpenAI pointing at the gateway's scan scenario."""
+    settings = get_settings()
+    return ChatOpenAI(
+        model=settings.scan_scenario,
+        base_url=settings.ai_gateway_url,
+        api_key=settings.ai_gateway_key,
+        temperature=0,
+    )
+
+
+def _build_reason_llm() -> ChatOpenAI:
+    """Create ChatOpenAI for the reason scenario (deep review)."""
+    settings = get_settings()
+    return ChatOpenAI(
+        model=settings.reason_scenario,
+        base_url=settings.ai_gateway_url,
+        api_key=settings.ai_gateway_key,
+        temperature=0,
+    )
+
+
+# ── Nodes ──────────────────────────────────────────────
+
+
+def scan_call(state: ReviewState) -> dict:
+    """Invoke the scan LLM with tools. Tracks round count and token usage."""
+    llm = _build_scan_llm().bind_tools(ALL_TOOLS)
+
+    # Inject system prompt on first round
+    messages = list(state["messages"])
+    if state["round_count"] == 0:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        messages = [
+            SystemMessage(content=SCAN_SYSTEM_PROMPT),
+            HumanMessage(content=f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."),
+        ] + messages
+
+    response = llm.invoke(messages)
+    logger.info("scan_call", round=state["round_count"] + 1)
+
+    token_usage = response.usage_metadata or {}
+    input_tokens = token_usage.get("input_tokens", 0)
+
+    return {
+        "messages": [response],
+        "round_count": state["round_count"] + 1,
+        "total_input_tokens": state["total_input_tokens"] + input_tokens,
+    }
+
+
+def parse_result(state: ReviewState) -> dict:
+    """Extract review result from the last finish_review tool message, or force a partial result."""
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, ToolMessage):
+            try:
+                data = json.loads(msg.content)
+                if data.get("signal") == FINISH_REVIEW_SIGNAL:
+                    return {
+                        "risk_level": data.get("risk_level", "low"),
+                        "summary": data.get("summary", ""),
+                        "comments": data.get("comments", []),
+                    }
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+    # No finish signal found — force partial result
+    return {
+        "risk_level": "low",
+        "summary": "Review terminated early (budget/round limit). Partial analysis based on collected context.",
+        "comments": [],
+    }
+
+
+def deep_review(state: ReviewState) -> dict:
+    """One-shot deep review using the reason scenario (stronger model)."""
+    llm = _build_reason_llm()
+
+    # Build context from tool messages collected during scan
+    context_parts = []
+    for msg in state["messages"]:
+        if isinstance(msg, ToolMessage) and msg.content:
+            context_parts.append(msg.content)
+
+    context = "\n\n---\n\n".join(context_parts[-10:])  # Last 10 tool results
+
+    prompt = DEEP_REVIEW_PROMPT.format(reason=state.get("escalate_reason", "unknown"))
+
+    from langchain_core.messages import SystemMessage, HumanMessage
+    response = llm.invoke([
+        SystemMessage(content=prompt),
+        HumanMessage(content=context),
+    ])
+
+    raw = response.content or ""
+
+    # Parse JSON (with markdown fence tolerance)
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("```", 2)[1]
+        if text.startswith("json"):
+            text = text[4:]
+        text = text.rsplit("```", 1)[0].strip()
+
+    try:
+        data = json.loads(text)
+        return {
+            "risk_level": "high",
+            "summary": data.get("summary", ""),
+            "comments": data.get("comments", []),
+        }
+    except json.JSONDecodeError:
+        logger.error("deep_review_parse_failed", raw=raw[:500])
+        return {
+            "risk_level": "high",
+            "summary": f"Deep review escalated: {state.get('escalate_reason', '')}. (Parse error)",
+            "comments": [],
+        }
+
+
+# ── Routers (conditional edges) ───────────────────────
+
+
+def scan_router(state: ReviewState) -> str:
+    """After scan_call: route based on whether LLM made tool calls."""
+    last_msg = state["messages"][-1]
+    if hasattr(last_msg, "tool_calls") and last_msg.tool_calls:
+        return "has_tool_calls"
+    return "no_tool_calls"
+
+
+def tools_router(state: ReviewState) -> str:
+    """After scan_tools: check for control signals, budget, and dead loops."""
+    settings = get_settings()
+
+    # Check for control signals in the latest tool messages
+    for msg in reversed(state["messages"]):
+        if not isinstance(msg, ToolMessage):
+            break
+        try:
+            data = json.loads(msg.content)
+            signal = data.get("signal")
+            if signal == FINISH_REVIEW_SIGNAL:
+                return "finish"
+            if signal == ESCALATE_SIGNAL:
+                # Store escalation reason in state (via parse step)
+                return "escalate"
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # Check round budget
+    if state["round_count"] >= settings.max_rounds:
+        logger.warning("agent_max_rounds", rounds=state["round_count"])
+        return "finish"
+
+    # Check token budget
+    if state["total_input_tokens"] >= settings.max_input_tokens:
+        logger.warning("agent_token_budget_exceeded", tokens=state["total_input_tokens"])
+        return "finish"
+
+    return "continue"
+
+
+def _extract_escalate_reason(state: ReviewState) -> dict:
+    """Intermediate node: extract escalation reason from tool messages before deep_review."""
+    for msg in reversed(state["messages"]):
+        if isinstance(msg, ToolMessage):
+            try:
+                data = json.loads(msg.content)
+                if data.get("signal") == ESCALATE_SIGNAL:
+                    return {"escalated": True, "escalate_reason": data.get("reason", "")}
+            except (json.JSONDecodeError, TypeError):
+                continue
+    return {"escalated": True, "escalate_reason": "unknown"}
+
+
+# ── Graph Assembly ─────────────────────────────────────
+
+
+def build_review_graph() -> StateGraph:
+    """Build and compile the review agent graph."""
+    graph = StateGraph(ReviewState)
+
+    # Nodes
+    graph.add_node("scan_call", scan_call)
+    graph.add_node("scan_tools", ToolNode(ALL_TOOLS))
+    graph.add_node("parse_result", parse_result)
+    graph.add_node("extract_escalation", _extract_escalate_reason)
+    graph.add_node("deep_review", deep_review)
+
+    # Edges
+    graph.set_entry_point("scan_call")
+
+    graph.add_conditional_edges("scan_call", scan_router, {
+        "has_tool_calls": "scan_tools",
+        "no_tool_calls": "parse_result",
+    })
+
+    graph.add_conditional_edges("scan_tools", tools_router, {
+        "continue": "scan_call",
+        "finish": "parse_result",
+        "escalate": "extract_escalation",
+    })
+
+    graph.add_edge("extract_escalation", "deep_review")
+    graph.add_edge("deep_review", END)
+    graph.add_edge("parse_result", END)
+
+    return graph.compile()
