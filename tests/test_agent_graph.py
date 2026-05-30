@@ -416,3 +416,63 @@ class TestCompressContext:
         assert result["compressed"] is True
         assert "messages" not in result  # No message replacement needed
         mock_build_llm.return_value.invoke.assert_not_called()
+
+
+# ── deep_review handoff ────────────────────────────────
+
+
+class TestDeepReviewHandoff:
+    @patch("app.agent.graph._build_reason_llm")
+    def test_truncates_long_tool_results(self, mock_build_llm):
+        from app.agent.graph import deep_review
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = json.dumps({
+            "summary": "Found issue",
+            "comments": [],
+        })
+        mock_llm.invoke.return_value = mock_response
+        mock_build_llm.return_value = mock_llm
+
+        # Create a state with a very long tool message
+        long_content = "x" * 5000
+        state = _make_state(
+            messages=[
+                AIMessage(content="", tool_calls=[{"name": "read_file", "args": {}, "id": "1"}]),
+                ToolMessage(content=long_content, tool_call_id="1"),
+            ],
+            escalate_reason="large change",
+            escalated=True,
+        )
+        deep_review(state)
+
+        # Verify the context sent to LLM was truncated
+        call_args = mock_llm.invoke.call_args[0][0]
+        human_msg = [m for m in call_args if hasattr(m, 'content') and len(m.content) > 100][0]
+        assert len(human_msg.content) <= 2100  # 2000 + "[truncated]" + margin
+        assert "[truncated]" in human_msg.content
+
+    @patch("app.agent.graph._build_reason_llm")
+    def test_returns_high_risk_result(self, mock_build_llm):
+        from app.agent.graph import deep_review
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = json.dumps({
+            "summary": "Critical auth issue",
+            "comments": [{"filename": "auth.py", "line": 10, "severity": "error", "comment": "Token leak"}],
+        })
+        mock_llm.invoke.return_value = mock_response
+        mock_build_llm.return_value = mock_llm
+
+        state = _make_state(
+            messages=[
+                AIMessage(content="", tool_calls=[{"name": "get_pr_diff", "args": {}, "id": "1"}]),
+                ToolMessage(content="diff content", tool_call_id="1"),
+            ],
+            escalate_reason="auth module",
+            escalated=True,
+        )
+        result = deep_review(state)
+        assert result["risk_level"] == "high"
+        assert result["summary"] == "Critical auth issue"
+        assert len(result["comments"]) == 1

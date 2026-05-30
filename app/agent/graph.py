@@ -141,20 +141,29 @@ def deep_review(state: ReviewState) -> dict:
     """One-shot deep review using the reason scenario (stronger model)."""
     llm = _build_reason_llm()
 
-    # Build context from tool messages collected during scan
-    context_parts = []
+    # Build structured context from tool messages
+    context_sections = []
     for msg in state["messages"]:
         if isinstance(msg, ToolMessage) and msg.content:
-            context_parts.append(msg.content)
+            content = msg.content.strip()
+            if len(content) > 2000:
+                content = content[:2000] + "\n[truncated]"
+            context_sections.append(content)
 
-    context = "\n\n---\n\n".join(context_parts[-10:])  # Last 10 tool results
+    # Keep last 15 tool results, prioritizing recent ones
+    context_sections = context_sections[-15:]
+    context = "\n\n---\n\n".join(context_sections)
+
+    # Truncate total context to ~18K chars
+    if len(context) > 18000:
+        context = context[:18000] + "\n\n[context truncated to fit budget]"
 
     prompt = DEEP_REVIEW_PROMPT.format(reason=state.get("escalate_reason", "unknown"))
 
     from langchain_core.messages import SystemMessage, HumanMessage
     response = llm.invoke([
-        SystemMessage(content=prompt),
         HumanMessage(content=context),
+        SystemMessage(content=prompt),
     ])
 
     raw = response.content or ""
