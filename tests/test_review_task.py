@@ -8,11 +8,10 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
-    @patch("app.tasks.review.get_pr_incremental_diff")
     @patch("app.tasks.review.get_last_review")
     @patch("app.tasks.review.get_pr_head_sha")
     def test_re_review_passes_prior_comments_to_graph(
-        self, mock_sha, mock_last, mock_diff, mock_graph, mock_resolve, mock_save, mock_post,
+        self, mock_sha, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
     ):
         mock_sha.return_value = "newsha456"
         mock_last.return_value = {
@@ -21,7 +20,6 @@ class TestRunReviewReReview:
                 {"id": 1, "filename": "a.py", "line": 10, "severity": "warning", "comment": "Issue"},
             ],
         }
-        mock_diff.return_value = []
 
         mock_result = {
             "risk_level": "low", "summary": "OK", "comments": [],
@@ -105,3 +103,7 @@ class TestRunReviewReReview:
         run_review.__wrapped__.__func__(mock_task, "org/repo", 42)
 
         mock_resolve.assert_called_once_with([5])
+
+        # Verify resolved comments are excluded from save_review
+        save_call_result = mock_save.call_args[0][3]  # 4th positional arg is result dict
+        assert all(c.get("severity") != "resolved" for c in save_call_result["comments"])

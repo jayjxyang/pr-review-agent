@@ -6,7 +6,7 @@ from app.core.celery_app import celery_app
 from app.core.logging import get_logger
 from app.agent import build_review_graph
 from app.services.reviewer import post_review
-from app.services.github import get_pr_head_sha, get_pr_incremental_diff
+from app.services.github import get_pr_head_sha
 from app.services.persistence import save_review, get_last_review, resolve_comments
 
 logger = get_logger(__name__)
@@ -85,8 +85,10 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             if c.get("severity") == "resolved" and c.get("prior_comment_id")
         ]
 
-        # Persist new review to PostgreSQL
-        save_review(repo_full_name, pr_number, ref, result)
+        # Persist new review to PostgreSQL (exclude resolved-status entries — they're prior-review metadata)
+        save_result = dict(result)
+        save_result["comments"] = [c for c in result.get("comments", []) if c.get("severity") != "resolved"]
+        save_review(repo_full_name, pr_number, ref, save_result)
 
         # Mark old comments as resolved
         if resolved_ids:
