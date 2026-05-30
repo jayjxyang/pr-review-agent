@@ -283,8 +283,11 @@ def compress_context(state: ReviewState) -> dict:
     if not early_tool_contents:
         return {"compressed": True}
 
-    # Call LLM to compress
+    # Call LLM to compress (cap input to prevent blowing context window)
     tool_results_text = "\n\n---\n\n".join(early_tool_contents)
+    if len(tool_results_text) > 30000:
+        tool_results_text = tool_results_text[:30000] + "\n\n[input truncated for compression]"
+
     response = llm.invoke([
         SystemMessage(content=COMPRESS_PROMPT),
         HumanMessage(content=tool_results_text),
@@ -296,11 +299,15 @@ def compress_context(state: ReviewState) -> dict:
     # Build new message list using RemoveMessage to clear old, then add new
     remove_msgs = [RemoveMessage(id=msg.id) for msg in messages if hasattr(msg, "id") and msg.id]
 
-    # Reconstruct: original prompts + compressed summary + recent round
+    # Reconstruct: system prompt + human prompt with compressed context + recent round
+    # Use HumanMessage for summary (not SystemMessage) to maintain valid role alternation
+    compressed_human = (
+        f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']}).\n\n"
+        f"[COMPRESSED CONTEXT FROM ROUNDS 1-{state['round_count']}]\n\n{summary}"
+    )
     new_messages = remove_msgs + [
         SystemMessage(content=SCAN_SYSTEM_PROMPT),
-        HumanMessage(content=f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."),
-        SystemMessage(content=f"[COMPRESSED CONTEXT FROM ROUNDS 1-{state['round_count'] - 1}]\n\n{summary}"),
+        HumanMessage(content=compressed_human),
     ] + list(messages[recent_start:])
 
     return {"messages": new_messages, "compressed": True}

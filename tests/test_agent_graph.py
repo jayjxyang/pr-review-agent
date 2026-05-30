@@ -362,10 +362,10 @@ class TestCompressContext:
         result = compress_context(state)
         # Count non-RemoveMessage messages (the actual content)
         content_msgs = [m for m in result["messages"] if not isinstance(m, RemoveMessage)]
-        # Should be: SystemMessage + HumanMessage + CompressedSummary + 2 recent = 5
-        # Original was 10 (4 rounds * 2 + 1 round * 2)
+        # Should be: SystemMessage + HumanMessage(with summary) + 2 recent = 4
+        # Original was 10 (5 rounds * 2 messages each)
         assert len(content_msgs) < original_count
-        assert len(content_msgs) == 5  # sys + human + summary + recent AI + recent Tool
+        assert len(content_msgs) == 4  # sys + human(+summary) + recent AI + recent Tool
 
     @patch("app.agent.graph._build_scan_llm")
     def test_preserves_recent_round_messages(self, mock_build_llm):
