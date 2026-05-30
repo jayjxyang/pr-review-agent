@@ -12,6 +12,7 @@ Graph flow:
 
 import json
 import hashlib
+from functools import lru_cache
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
@@ -28,6 +29,7 @@ from app.services.tools.control import FINISH_REVIEW_SIGNAL, ESCALATE_SIGNAL
 logger = get_logger(__name__)
 
 
+@lru_cache(maxsize=1)
 def _build_scan_llm() -> ChatOpenAI:
     """Create ChatOpenAI pointing at the gateway's scan scenario."""
     settings = get_settings()
@@ -39,6 +41,7 @@ def _build_scan_llm() -> ChatOpenAI:
     )
 
 
+@lru_cache(maxsize=1)
 def _build_reason_llm() -> ChatOpenAI:
     """Create ChatOpenAI for the reason scenario (deep review)."""
     settings = get_settings()
@@ -228,8 +231,18 @@ def _extract_escalate_reason(state: ReviewState) -> dict:
 
 # ── Graph Assembly ─────────────────────────────────────
 
+_compiled_graph = None
 
-def build_review_graph() -> StateGraph:
+
+def build_review_graph():
+    """Return the cached compiled review graph (built once per process)."""
+    global _compiled_graph
+    if _compiled_graph is None:
+        _compiled_graph = _build_graph()
+    return _compiled_graph
+
+
+def _build_graph() -> StateGraph:
     """Build and compile the review agent graph."""
     graph = StateGraph(ReviewState)
 
