@@ -10,7 +10,7 @@ from app.services.tools.control import (
     FINISH_REVIEW_SIGNAL,
     ESCALATE_SIGNAL,
 )
-from app.agent.graph import scan_router, tools_router, parse_result, _extract_escalate_reason
+from app.agent.graph import scan_router, tools_router, parse_result, _extract_escalate_reason, post_tool_processing
 
 
 # ── Helper ─────────────────────────────────────────────
@@ -198,3 +198,71 @@ class TestExtractEscalateReason:
         result = _extract_escalate_reason(state)
         assert result["escalated"] is True
         assert result["escalate_reason"] == "unknown"
+
+
+# ── post_tool_processing ───────────────────────────────
+
+
+class TestPostToolProcessing:
+    def test_records_fingerprint(self):
+        ai_msg = AIMessage(content="", tool_calls=[{"name": "read_file", "args": {"repo": "x", "path": "y", "ref": "z"}, "id": "1"}])
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(messages=[ai_msg, tool_msg], tool_call_history=[])
+        result = post_tool_processing(state)
+        assert len(result["tool_call_history"]) == 1
+        assert result["tool_call_history"][0].startswith("read_file:")
+
+    def test_appends_to_existing_history(self):
+        ai_msg = AIMessage(content="", tool_calls=[{"name": "search_code", "args": {"repo": "x", "query": "foo"}, "id": "2"}])
+        tool_msg = ToolMessage(content="results", tool_call_id="2")
+        state = _make_state(messages=[ai_msg, tool_msg], tool_call_history=["read_file:abc12345"])
+        result = post_tool_processing(state)
+        assert len(result["tool_call_history"]) == 2
+
+    def test_same_params_same_fingerprint(self):
+        args = {"repo": "x", "path": "a.py", "ref": "main"}
+        ai_msg1 = AIMessage(content="", tool_calls=[{"name": "read_file", "args": args, "id": "1"}])
+        tool_msg1 = ToolMessage(content="file", tool_call_id="1")
+        state1 = _make_state(messages=[ai_msg1, tool_msg1], tool_call_history=[])
+        r1 = post_tool_processing(state1)
+
+        ai_msg2 = AIMessage(content="", tool_calls=[{"name": "read_file", "args": args, "id": "2"}])
+        tool_msg2 = ToolMessage(content="file", tool_call_id="2")
+        state2 = _make_state(messages=[ai_msg2, tool_msg2], tool_call_history=[])
+        r2 = post_tool_processing(state2)
+
+        assert r1["tool_call_history"][0] == r2["tool_call_history"][0]
+
+
+# ── Dead loop detection in tools_router ────────────────
+
+
+class TestDeadLoopDetection:
+    def test_three_identical_calls_triggers_finish(self):
+        fp = "read_file:abc12345"
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            tool_call_history=[fp, fp, fp],
+            round_count=3,
+        )
+        assert tools_router(state) == "finish"
+
+    def test_two_identical_calls_continues(self):
+        fp = "read_file:abc12345"
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            tool_call_history=[fp, fp],
+            round_count=2,
+        )
+        assert tools_router(state) == "continue"
+
+    def test_three_different_calls_continues(self):
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            tool_call_history=["read_file:aaa", "search_code:bbb", "read_file:ccc"],
+            round_count=3,
+        )
+        assert tools_router(state) == "continue"
