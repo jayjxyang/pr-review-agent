@@ -1,12 +1,13 @@
-"""LangGraph StateGraph — ReAct loop with risk-based escalation.
+"""LangGraph StateGraph — ReAct loop with risk-based escalation and context compression.
 
 Graph flow:
   START → scan_call → scan_router
-    ├─ has_tool_calls → scan_tools → tools_router
-    │     ├─ continue     → scan_call (loop)
-    │     ├─ finish       → parse_result → END
-    │     ├─ escalate     → deep_review → END
-    │     └─ budget_exceeded → parse_result → END
+    ├─ has_tool_calls → scan_tools → post_tool_processing → tools_router
+    │     ├─ continue       → scan_call (loop)
+    │     ├─ compress       → compress_context → scan_call (loop with compressed context)
+    │     ├─ finish         → parse_result → END
+    │     ├─ escalate       → extract_escalation → deep_review → END
+    │     └─ budget/loop    → parse_result → END
     └─ no_tool_calls → parse_result → END
 """
 
