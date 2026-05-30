@@ -1,4 +1,5 @@
 import fnmatch
+import requests
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -109,3 +110,22 @@ def get_pr_head_sha(repo_full_name: str, pr_number: int) -> str:
     gh = _github_client()
     pr = gh.get_repo(repo_full_name).get_pull(pr_number)
     return pr.head.sha
+
+
+def graphql_query(query: str, variables: dict) -> dict:
+    """Execute a GitHub GraphQL query. Returns the 'data' portion of the response."""
+    settings = get_settings()
+    response = requests.post(
+        "https://api.github.com/graphql",
+        json={"query": query, "variables": variables},
+        headers={
+            "Authorization": f"Bearer {settings.github_app_token}",
+            "Content-Type": "application/json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    result = response.json()
+    if "errors" in result:
+        raise Exception(f"GraphQL error: {result['errors'][0]['message']}")
+    return result["data"]
