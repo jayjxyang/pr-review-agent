@@ -105,6 +105,35 @@ def get_pr_patches(repo_full_name: str, pr_number: int) -> list[FilePatch]:
     return patches
 
 
+def get_pr_incremental_diff(repo_full_name: str, base_sha: str, head_sha: str) -> list[FilePatch]:
+    """Fetch the diff between two commits (base_sha..head_sha).
+
+    Used for re-review: compares last-reviewed commit to current HEAD.
+    Returns a list of FilePatch objects. Binary files and skip-pattern files excluded.
+
+    Raises GithubException on API errors.
+    """
+    repo = _github_client().get_repo(repo_full_name)
+    comparison = repo.compare(base_sha, head_sha)
+
+    patches: list[FilePatch] = []
+    for f in comparison.files:
+        if _should_skip(f.filename):
+            continue
+        if not f.patch:
+            continue
+        patches.append(FilePatch(filename=f.filename, patch=f.patch))
+
+    logger.info(
+        "incremental_diff_fetched",
+        repo=repo_full_name,
+        base=base_sha[:7],
+        head=head_sha[:7],
+        files=len(patches),
+    )
+    return patches
+
+
 def get_pr_head_sha(repo_full_name: str, pr_number: int) -> str:
     """Get the HEAD commit SHA of the PR branch."""
     gh = _github_client()
