@@ -11,7 +11,7 @@ from app.services.tools.control import (
     FINISH_REVIEW_SIGNAL,
     ESCALATE_SIGNAL,
 )
-from app.agent.graph import scan_router, tools_router, parse_result, _extract_escalate_reason, post_tool_processing
+from app.agent.graph import scan_router, tools_router, parse_result, _extract_escalate_reason, post_tool_processing, scan_call
 
 
 # ── Helper ─────────────────────────────────────────────
@@ -34,6 +34,8 @@ def _make_state(**overrides) -> dict:
         "tool_call_history": [],
         "traces": [],
         "compressed": False,
+        "prior_comments": [],
+        "last_reviewed_sha": "",
     }
     base.update(overrides)
     return base
@@ -477,3 +479,57 @@ class TestDeepReviewHandoff:
         assert result["risk_level"] == "high"
         assert result["summary"] == "Critical auth issue"
         assert len(result["comments"]) == 1
+
+
+# ── scan_call re-review injection ─────────────────────
+
+
+class TestReReviewInjection:
+    def test_scan_call_injects_re_review_addendum(self, monkeypatch):
+        """When prior_comments is non-empty, system prompt includes re-review addendum."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state(
+            prior_comments=[
+                {"id": 1, "filename": "a.py", "line": 10, "severity": "warning", "comment": "Missing check"},
+            ],
+            last_reviewed_sha="old123",
+        )
+
+        scan_call(state)
+
+        system_content = captured["messages"][0].content
+        assert "Re-review Context" in system_content
+        assert "old123" in system_content
+        assert "Missing check" in system_content
+
+    def test_scan_call_no_addendum_on_first_review(self, monkeypatch):
+        """When prior_comments is empty, system prompt has no re-review addendum."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state()  # prior_comments=[] by default
+
+        scan_call(state)
+
+        system_content = captured["messages"][0].content
+        assert "Re-review Context" not in system_content

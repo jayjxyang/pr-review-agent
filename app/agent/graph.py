@@ -65,9 +65,26 @@ def scan_call(state: ReviewState) -> dict:
     messages = list(state["messages"])
     if state["round_count"] == 0:
         from langchain_core.messages import SystemMessage, HumanMessage
+        from app.agent.prompts import RE_REVIEW_ADDENDUM
+
+        # Build system prompt, with re-review addendum if applicable
+        system_prompt = SCAN_SYSTEM_PROMPT
+        prior_comments = state.get("prior_comments", [])
+        if prior_comments:
+            formatted_comments = "\n".join(
+                f"- [{c['severity']}] {c['filename']}:L{c['line']} — {c['comment']} (id: {c['id']})"
+                for c in prior_comments
+            )
+            system_prompt += RE_REVIEW_ADDENDUM.format(
+                last_reviewed_sha=state.get("last_reviewed_sha", "unknown"),
+                prior_comments=formatted_comments,
+            )
+
+        human_content = f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."
+
         messages = [
-            SystemMessage(content=SCAN_SYSTEM_PROMPT),
-            HumanMessage(content=f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."),
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=human_content),
         ] + messages
 
     response = llm.invoke(messages)
