@@ -229,6 +229,10 @@ def tools_router(state: ReviewState) -> str:
         logger.warning("dead_loop_detected", tool=history[-1])
         return "finish"
 
+    # Check if context compression is needed
+    if state["round_count"] >= settings.compress_at_round and not state.get("compressed", False):
+        return "compress"
+
     return "continue"
 
 
@@ -243,6 +247,11 @@ def _extract_escalate_reason(state: ReviewState) -> dict:
             except (json.JSONDecodeError, TypeError):
                 continue
     return {"escalated": True, "escalate_reason": "unknown"}
+
+
+def compress_context(state: ReviewState) -> dict:
+    """Compress early-round tool results into a structured summary via LLM. (placeholder)"""
+    return {"compressed": True}
 
 
 # ── Graph Assembly ─────────────────────────────────────
@@ -269,6 +278,7 @@ def _build_graph() -> StateGraph:
     graph.add_node("parse_result", parse_result)
     graph.add_node("extract_escalation", _extract_escalate_reason)
     graph.add_node("deep_review", deep_review)
+    graph.add_node("compress_context", compress_context)
 
     # Edges
     graph.set_entry_point("scan_call")
@@ -282,10 +292,12 @@ def _build_graph() -> StateGraph:
 
     graph.add_conditional_edges("post_tool_processing", tools_router, {
         "continue": "scan_call",
+        "compress": "compress_context",
         "finish": "parse_result",
         "escalate": "extract_escalation",
     })
 
+    graph.add_edge("compress_context", "scan_call")
     graph.add_edge("extract_escalation", "deep_review")
     graph.add_edge("deep_review", END)
     graph.add_edge("parse_result", END)

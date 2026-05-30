@@ -268,3 +268,46 @@ class TestDeadLoopDetection:
             round_count=3,
         )
         assert tools_router(state) == "continue"
+
+
+# ── Compression routing in tools_router ────────────────
+
+
+class TestCompressRouter:
+    """Test compression routing integrated into tools_router."""
+
+    def test_compress_at_round_5(self):
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            round_count=5,
+            compressed=False,
+        )
+        assert tools_router(state) == "compress"
+
+    def test_no_compress_before_round_5(self):
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            round_count=3,
+            compressed=False,
+        )
+        assert tools_router(state) == "continue"
+
+    def test_no_compress_if_already_compressed(self):
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            round_count=7,
+            compressed=True,
+        )
+        assert tools_router(state) == "continue"
+
+    def test_compress_at_round_above_5(self):
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            round_count=6,
+            compressed=False,
+        )
+        assert tools_router(state) == "compress"
