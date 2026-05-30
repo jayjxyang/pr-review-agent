@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_app_token: str = ""
     redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql://localhost:5432/pr_review"
 
     # Gateway settings
     ai_gateway_url: str = "http://localhost:8080/v1"
