@@ -162,8 +162,8 @@ def deep_review(state: ReviewState) -> dict:
 
     from langchain_core.messages import SystemMessage, HumanMessage
     response = llm.invoke([
-        HumanMessage(content=context),
         SystemMessage(content=prompt),
+        HumanMessage(content=context),
     ])
 
     raw = response.content or ""

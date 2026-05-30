@@ -448,7 +448,8 @@ class TestDeepReviewHandoff:
 
         # Verify the context sent to LLM was truncated
         call_args = mock_llm.invoke.call_args[0][0]
-        human_msg = [m for m in call_args if hasattr(m, 'content') and len(m.content) > 100][0]
+        from langchain_core.messages import HumanMessage
+        human_msg = [m for m in call_args if isinstance(m, HumanMessage)][0]
         assert len(human_msg.content) <= 2100  # 2000 + "[truncated]" + margin
         assert "[truncated]" in human_msg.content
 
