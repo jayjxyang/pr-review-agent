@@ -30,10 +30,10 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
     for c in comments:
         emoji = _SEVERITY_EMOJI.get(c.get("severity", "suggestion"), "🔵")
         gh_comments.append({
-            "path": c["filename"],
-            "line": c["line"],
+            "path": c.get("filename", "unknown"),
+            "line": c.get("line", 1),
             "side": "RIGHT",
-            "body": f"{emoji} **{c.get('severity', 'suggestion')}**: {c['comment']}",
+            "body": f"{emoji} **{c.get('severity', 'suggestion')}**: {c.get('comment', '')}",
         })
 
     try:
@@ -41,9 +41,10 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
             pr.create_review(body=body, event="COMMENT", comments=gh_comments)
         else:
             pr.create_issue_comment(body)
-    except Exception:
+    except Exception as exc:
+        logger.warning("inline_review_failed_fallback", error=str(exc))
         fallback = body + "\n\n### Findings\n\n"
         for c in comments:
             emoji = _SEVERITY_EMOJI.get(c.get("severity"), "🔵")
-            fallback += f"- {emoji} **{c['filename']}:{c['line']}** — {c['comment']}\n"
+            fallback += f"- {emoji} **{c.get('filename', 'unknown')}:{c.get('line', '?')}** — {c.get('comment', '')}\n"
         pr.create_issue_comment(fallback)

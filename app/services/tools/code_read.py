@@ -2,11 +2,10 @@
 
 import base64
 
-from github import Github
 from langchain_core.tools import tool
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.github import _github_client
 
 logger = get_logger(__name__)
 
@@ -14,16 +13,11 @@ _MAX_LINES = 300
 _MAX_SEARCH_RESULTS = 20
 
 
-def _github_client() -> Github:
-    return Github(get_settings().github_app_token)
-
-
 @tool
 def read_file(repo: str, path: str, ref: str, start_line: int = None, end_line: int = None) -> str:
     """Read a file from the repository. Supports optional line range. Returns file content with line numbers."""
-    gh = _github_client()
     try:
-        content_file = gh.get_repo(repo).get_contents(path, ref=ref)
+        content_file = _github_client().get_repo(repo).get_contents(path, ref=ref)
     except Exception as e:
         return f"Error: could not read {path}: {e}"
 
@@ -47,13 +41,12 @@ def read_file(repo: str, path: str, ref: str, start_line: int = None, end_line: 
 @tool
 def search_code(repo: str, query: str, path_filter: str = None) -> str:
     """Search for code in the repository using a keyword. Returns matching files with scores."""
-    gh = _github_client()
     q = f"{query} repo:{repo}"
     if path_filter:
         q += f" path:{path_filter}"
 
     try:
-        results = gh.search_code(q)
+        results = _github_client().search_code(q)
     except Exception as e:
         return f"Error searching: {e}"
 

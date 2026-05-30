@@ -2,24 +2,18 @@
 
 import base64
 
-from github import Github
 from langchain_core.tools import tool
 
-from app.core.config import get_settings
+from app.services.github import _github_client
 
 _RULES_DIR = ".ai-review/rules"
-
-
-def _github_client() -> Github:
-    return Github(get_settings().github_app_token)
 
 
 @tool
 def read_repo_rules(repo: str, ref: str) -> str:
     """Read the project's AI review rules from .ai-review/rules/ directory. Returns all rule files concatenated."""
-    gh = _github_client()
     try:
-        contents = gh.get_repo(repo).get_contents(_RULES_DIR, ref=ref)
+        contents = _github_client().get_repo(repo).get_contents(_RULES_DIR, ref=ref)
     except Exception:
         return "No .ai-review/rules/ directory found in this repository."
 

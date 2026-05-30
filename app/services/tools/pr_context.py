@@ -1,25 +1,22 @@
 """PR context tools — fetch PR metadata and diffs via GitHub API."""
 
-from github import Github
 from langchain_core.tools import tool
 
-from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.services.github import _github_client
 
 logger = get_logger(__name__)
 
 _MAX_DIFF_LINES = 500
 
 
-def _github_client() -> Github:
-    return Github(get_settings().github_app_token)
-
-
 @tool
 def get_pr_info(repo: str, pr_number: int) -> str:
     """Get PR metadata: title, description, author, labels, and linked issues."""
-    gh = _github_client()
-    pr = gh.get_repo(repo).get_pull(pr_number)
+    try:
+        pr = _github_client().get_repo(repo).get_pull(pr_number)
+    except Exception as e:
+        return f"Error fetching PR info: {e}"
 
     labels = ", ".join(l.name for l in pr.labels) or "none"
     body = pr.body or "(no description)"
@@ -42,8 +39,10 @@ def get_pr_info(repo: str, pr_number: int) -> str:
 @tool
 def get_pr_changed_files(repo: str, pr_number: int) -> str:
     """Get the list of changed files in the PR with addition/deletion counts."""
-    gh = _github_client()
-    pr = gh.get_repo(repo).get_pull(pr_number)
+    try:
+        pr = _github_client().get_repo(repo).get_pull(pr_number)
+    except Exception as e:
+        return f"Error fetching changed files: {e}"
     files = pr.get_files()
 
     output = []
@@ -57,8 +56,10 @@ def get_pr_changed_files(repo: str, pr_number: int) -> str:
 @tool
 def get_pr_diff(repo: str, pr_number: int, file_path: str) -> str:
     """Get the unified diff for a specific file in the PR. Use get_pr_changed_files first to see what files changed."""
-    gh = _github_client()
-    pr = gh.get_repo(repo).get_pull(pr_number)
+    try:
+        pr = _github_client().get_repo(repo).get_pull(pr_number)
+    except Exception as e:
+        return f"Error fetching diff: {e}"
 
     for f in pr.get_files():
         if f.filename == file_path:
