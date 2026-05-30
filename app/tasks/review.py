@@ -6,8 +6,8 @@ from app.core.celery_app import celery_app
 from app.core.logging import get_logger
 from app.agent import build_review_graph
 from app.services.reviewer import post_review
-from app.services.github import get_pr_head_sha
-from app.services.persistence import save_review
+from app.services.github import get_pr_head_sha, get_pr_incremental_diff
+from app.services.persistence import save_review, get_last_review, resolve_comments
 
 logger = get_logger(__name__)
 
@@ -23,9 +23,9 @@ logger = get_logger(__name__)
 def run_review(self: Task, repo_full_name: str, pr_number: int):
     """
     End-to-end PR review using LangGraph agent:
-    1. Build graph and invoke with PR context
-    2. Graph handles: scan → risk assessment → optional escalation
-    3. Persist results to PostgreSQL
+    1. Detect re-review (query PostgreSQL for prior review)
+    2. Build graph and invoke with PR context + prior comments
+    3. Persist results, resolve old comments
     4. Post review to GitHub
     """
     log = logger.bind(repo=repo_full_name, pr=pr_number, task_id=self.request.id)
@@ -34,6 +34,20 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
     try:
         ref = get_pr_head_sha(repo_full_name, pr_number)
         log.info("pr_ref_resolved", ref=ref)
+
+        # Re-review detection
+        last_review = get_last_review(repo_full_name, pr_number)
+        prior_comments = []
+        last_reviewed_sha = ""
+
+        if last_review:
+            last_reviewed_sha = last_review["reviewed_sha"]
+            prior_comments = last_review["comments"]
+            log.info(
+                "re_review_detected",
+                last_sha=last_reviewed_sha[:7],
+                unresolved_comments=len(prior_comments),
+            )
 
         # Build and invoke graph
         graph = build_review_graph()
@@ -52,6 +66,8 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "tool_call_history": [],
             "traces": [],
             "compressed": False,
+            "prior_comments": prior_comments,
+            "last_reviewed_sha": last_reviewed_sha,
         })
 
         log.info(
@@ -62,8 +78,20 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             traces=len(result.get("traces", [])),
         )
 
-        # Persist to PostgreSQL (non-blocking — failure here doesn't stop GitHub posting)
+        # Extract resolved prior comment IDs from agent output
+        resolved_ids = [
+            c["prior_comment_id"]
+            for c in result.get("comments", [])
+            if c.get("severity") == "resolved" and c.get("prior_comment_id")
+        ]
+
+        # Persist new review to PostgreSQL
         save_review(repo_full_name, pr_number, ref, result)
+
+        # Mark old comments as resolved
+        if resolved_ids:
+            resolve_comments(resolved_ids)
+            log.info("prior_comments_resolved", count=len(resolved_ids))
 
         # Post review to GitHub
         post_review(repo_full_name, pr_number, result)
