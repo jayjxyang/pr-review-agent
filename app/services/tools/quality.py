@@ -75,3 +75,80 @@ def check_test_coverage(repo: str, source_path: str, ref: str) -> str:
     if not output:
         return f"No test references found for '{source_path}'."
     return f"Test files referencing '{module_name}':\n" + "\n".join(output)
+
+
+@tool
+def get_ci_status(repo: str, pr_number: int) -> str:
+    """Get CI check run statuses for the PR's HEAD commit.
+
+    Args:
+        repo: Repository full name (owner/repo).
+        pr_number: PR number.
+    """
+    try:
+        repo_obj = _github_client().get_repo(repo)
+        pr = repo_obj.get_pull(pr_number)
+        commit = repo_obj.get_commit(pr.head.sha)
+        checks = commit.get_check_runs()
+    except Exception as e:
+        return f"Error fetching CI status: {e}"
+
+    output = []
+    for check in checks:
+        status = check.status
+        conclusion = check.conclusion or "pending"
+        output.append(f"- {check.name}: {status}/{conclusion}")
+
+    if not output:
+        return "No CI checks found for this PR."
+    return "\n".join(output)
+
+
+_MAX_LOG_LINES = 100
+
+
+@tool
+def get_ci_logs(repo: str, pr_number: int, check_name: str) -> str:
+    """Get failure details for a specific CI check. Use get_ci_status first to see check names.
+
+    Args:
+        repo: Repository full name (owner/repo).
+        pr_number: PR number.
+        check_name: Name of the CI check to get logs for.
+    """
+    try:
+        repo_obj = _github_client().get_repo(repo)
+        pr = repo_obj.get_pull(pr_number)
+        commit = repo_obj.get_commit(pr.head.sha)
+        checks = commit.get_check_runs()
+    except Exception as e:
+        return f"Error fetching CI logs: {e}"
+
+    target_check = None
+    for check in checks:
+        if check.name == check_name:
+            target_check = check
+            break
+
+    if not target_check:
+        return f"Check '{check_name}' not found."
+
+    if target_check.conclusion == "success":
+        return f"Check '{check_name}' passed — no failure logs."
+
+    try:
+        annotations = target_check.get_annotations()
+    except Exception:
+        annotations = []
+
+    output = [f"Check '{check_name}' — conclusion: {target_check.conclusion}"]
+    for ann in annotations:
+        if len(output) >= _MAX_LOG_LINES:
+            output.append(f"\n[truncated — showing first {_MAX_LOG_LINES} entries]")
+            break
+        output.append(f"  {ann.path}:{ann.start_line} [{ann.annotation_level}] {ann.message}")
+
+    if len(output) == 1:
+        output.append("  No annotations available. Check the CI run URL for full logs.")
+
+    return "\n".join(output)
