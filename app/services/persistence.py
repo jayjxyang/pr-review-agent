@@ -68,3 +68,56 @@ def save_review(repo: str, pr_number: int, ref: str, result: dict) -> int | None
     except Exception as exc:
         logger.warning("review_persistence_failed", error=str(exc), repo=repo, pr=pr_number)
         return None
+
+
+_MAX_PRIOR_COMMENTS = 20
+
+
+def get_last_review(repo: str, pr_number: int) -> dict | None:
+    """Get the most recent review for a PR with its unresolved comments.
+
+    Returns:
+        Dict with 'reviewed_sha' and 'comments' (list of dicts), or None if no prior review.
+    """
+    try:
+        session = SessionLocal()
+        try:
+            review = (
+                session.query(Review)
+                .filter(Review.repo == repo, Review.pr_number == pr_number)
+                .order_by(Review.created_at.desc())
+                .first()
+            )
+            if not review:
+                return None
+
+            unresolved = (
+                session.query(ReviewComment)
+                .filter(
+                    ReviewComment.review_id == review.id,
+                    ReviewComment.resolved == False,  # noqa: E712
+                )
+                .order_by(ReviewComment.created_at.asc())
+                .limit(_MAX_PRIOR_COMMENTS)
+                .all()
+            )
+
+            return {
+                "reviewed_sha": review.reviewed_sha,
+                "comments": [
+                    {
+                        "id": c.id,
+                        "filename": c.filename,
+                        "line": c.line,
+                        "severity": c.severity,
+                        "comment": c.comment,
+                    }
+                    for c in unresolved
+                ],
+            }
+        finally:
+            session.close()
+
+    except Exception as exc:
+        logger.warning("get_last_review_failed", error=str(exc), repo=repo, pr=pr_number)
+        return None

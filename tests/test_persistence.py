@@ -6,7 +6,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from app.core.database import Base
 from app.models.review import Review, ReviewComment, AgentTrace
-from app.services.persistence import save_review
+from app.services.persistence import save_review, get_last_review
 
 
 def _setup_test_db(monkeypatch):
@@ -115,3 +115,77 @@ class TestSaveReview:
         monkeypatch.setattr("app.services.persistence.SessionLocal", lambda: (_ for _ in ()).throw(Exception("connection refused")))
         review_id = save_review("org/repo", 1, "xxx", {"risk_level": "low", "summary": "", "comments": [], "traces": []})
         assert review_id is None
+
+
+class TestGetLastReview:
+    def test_returns_last_review_with_unresolved_comments(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        review = Review(
+            repo="org/repo", pr_number=42, risk_level="medium",
+            summary="Found issues", reviewed_sha="abc123",
+        )
+        session.add(review)
+        session.flush()
+        session.add(ReviewComment(
+            review_id=review.id, filename="a.py", line=10,
+            severity="warning", comment="Missing check", resolved=True,
+        ))
+        session.add(ReviewComment(
+            review_id=review.id, filename="b.py", line=20,
+            severity="error", comment="SQL injection risk", resolved=False,
+        ))
+        session.commit()
+        session.close()
+
+        result = get_last_review("org/repo", 42)
+        assert result is not None
+        assert result["reviewed_sha"] == "abc123"
+        assert len(result["comments"]) == 1
+        assert result["comments"][0]["filename"] == "b.py"
+        assert result["comments"][0]["comment"] == "SQL injection risk"
+
+    def test_returns_none_when_no_prior_review(self, monkeypatch):
+        _setup_test_db(monkeypatch)
+        result = get_last_review("org/repo", 999)
+        assert result is None
+
+    def test_returns_latest_review(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        old_review = Review(
+            repo="org/repo", pr_number=42, risk_level="low",
+            summary="First review", reviewed_sha="old111",
+        )
+        session.add(old_review)
+        session.flush()
+        new_review = Review(
+            repo="org/repo", pr_number=42, risk_level="medium",
+            summary="Second review", reviewed_sha="new222",
+        )
+        session.add(new_review)
+        session.commit()
+        session.close()
+
+        result = get_last_review("org/repo", 42)
+        assert result["reviewed_sha"] == "new222"
+
+    def test_caps_unresolved_comments_at_20(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        review = Review(
+            repo="org/repo", pr_number=42, risk_level="high",
+            summary="Many issues", reviewed_sha="abc123",
+        )
+        session.add(review)
+        session.flush()
+        for i in range(25):
+            session.add(ReviewComment(
+                review_id=review.id, filename=f"file{i}.py", line=i,
+                severity="warning", comment=f"Issue {i}", resolved=False,
+            ))
+        session.commit()
+        session.close()
+
+        result = get_last_review("org/repo", 42)
+        assert len(result["comments"]) == 20
