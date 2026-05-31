@@ -274,3 +274,52 @@ class TestFeedbackColumn:
         assert loaded.feedback is None
         assert loaded.github_comment_id is None
         session.close()
+
+
+class TestSaveReviewIdempotency:
+    """A retry for the same (repo, pr, sha) must replace, not duplicate, the row."""
+
+    def test_same_sha_replaces_prior_review(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+
+        first = {
+            "risk_level": "low", "summary": "first pass",
+            "comments": [{"filename": "a.py", "line": 1, "severity": "warning", "comment": "x"}],
+            "traces": [],
+        }
+        second = {
+            "risk_level": "high", "summary": "second pass",
+            "comments": [], "traces": [],
+        }
+
+        id1 = save_review("org/repo", 42, "sha1", first)
+        id2 = save_review("org/repo", 42, "sha1", second)
+        assert id1 is not None and id2 is not None
+
+        session = session_factory()
+        rows = (
+            session.query(Review)
+            .filter(Review.repo == "org/repo", Review.pr_number == 42, Review.reviewed_sha == "sha1")
+            .all()
+        )
+        assert len(rows) == 1  # exactly one row for this natural key
+        assert rows[0].summary == "second pass"
+        # Children of the replaced review are gone (cascade)
+        assert session.query(ReviewComment).filter_by(review_id=id1).count() == 0
+        session.close()
+
+    def test_different_sha_keeps_both(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        base = {"risk_level": "low", "summary": "s", "comments": [], "traces": []}
+
+        save_review("org/repo", 42, "sha1", base)
+        save_review("org/repo", 42, "sha2", base)
+
+        session = session_factory()
+        count = (
+            session.query(Review)
+            .filter(Review.repo == "org/repo", Review.pr_number == 42)
+            .count()
+        )
+        assert count == 2  # re-review across different commits stays distinct
+        session.close()

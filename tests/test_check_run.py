@@ -124,3 +124,55 @@ class TestUpdateCheckRun:
 
         body = mock_patch.call_args[1]["json"]
         assert "secret" in body["output"]["summary"].lower() or "AWS" in body["output"]["summary"]
+
+
+class TestCreateCheckRunIdempotency:
+    """At-least-once Celery retries must reuse the same Check Run, not duplicate it."""
+
+    @patch("app.services.check_run.is_app_mode", return_value=True)
+    @patch("app.services.check_run.get_installation_token", return_value="ghs_token")
+    @patch("app.services.check_run.requests.get")
+    @patch("app.services.check_run.requests.post")
+    def test_reuses_existing_run_by_external_id(self, mock_post, mock_get, mock_token, mock_app):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {
+            "check_runs": [
+                {"id": 99, "name": "Bot4Bread", "external_id": "bot4bread:abc123sha"},
+            ]
+        }
+
+        from app.services.check_run import create_check_run
+        check_id = create_check_run("owner/repo", "abc123sha")
+
+        assert check_id == 99
+        mock_post.assert_not_called()  # reused, did not create a duplicate
+
+    @patch("app.services.check_run.is_app_mode", return_value=True)
+    @patch("app.services.check_run.get_installation_token", return_value="ghs_token")
+    @patch("app.services.check_run.requests.get")
+    @patch("app.services.check_run.requests.post")
+    def test_creates_with_external_id_when_none_exists(self, mock_post, mock_get, mock_token, mock_app):
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"check_runs": []}
+        mock_post.return_value.json.return_value = {"id": 7}
+
+        from app.services.check_run import create_check_run
+        check_id = create_check_run("owner/repo", "abc123sha")
+
+        assert check_id == 7
+        mock_post.assert_called_once()
+        assert mock_post.call_args[1]["json"]["external_id"] == "bot4bread:abc123sha"
+
+    @patch("app.services.check_run.is_app_mode", return_value=True)
+    @patch("app.services.check_run.get_installation_token", return_value="ghs_token")
+    @patch("app.services.check_run.requests.get")
+    @patch("app.services.check_run.requests.post")
+    def test_falls_back_to_create_when_probe_fails(self, mock_post, mock_get, mock_token, mock_app):
+        mock_get.return_value.status_code = 500  # probe failure must not crash
+        mock_post.return_value.json.return_value = {"id": 13}
+
+        from app.services.check_run import create_check_run
+        check_id = create_check_run("owner/repo", "abc123sha")
+
+        assert check_id == 13
+        mock_post.assert_called_once()

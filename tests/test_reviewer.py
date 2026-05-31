@@ -97,3 +97,68 @@ class TestPostReviewReturnsCommentIds:
         from app.services.reviewer import post_review
         comment_ids = post_review("org/repo", 42, result)
         assert comment_ids == [1001, 1002]
+
+
+class TestPostReviewLineValidation:
+    """A hallucinated line must degrade per-comment, not 422 the whole review."""
+
+    @patch("app.services.reviewer.get_pr_patches")
+    @patch("app.services.reviewer.get_github_client")
+    def test_invalid_lines_degrade_per_comment(self, mock_client, mock_patches):
+        mock_pr = MagicMock()
+        mock_pr.get_review_comments.return_value = []
+        mock_pr.get_issue_comments.return_value = []
+        mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr
+
+        from app.services.github import FilePatch
+        # a.py hunk starts at new-file line 10 with two added lines -> valid {10, 11}
+        mock_patches.return_value = [
+            FilePatch(filename="a.py", patch="@@ -1,0 +10,2 @@\n+line10\n+line11"),
+        ]
+
+        result = {
+            "risk_level": "low",
+            "summary": "s",
+            "comments": [
+                {"filename": "a.py", "line": 10, "severity": "warning", "comment": "valid line"},
+                {"filename": "a.py", "line": 999, "severity": "error", "comment": "hallucinated line"},
+                {"filename": "ghost.py", "line": 1, "severity": "warning", "comment": "file not in diff"},
+            ],
+        }
+
+        from app.services.reviewer import post_review
+        post_review("org/repo", 42, result, head_sha="sha")
+
+        gh_comments = mock_pr.create_review.call_args[1]["comments"]
+        assert len(gh_comments) == 1  # only the valid line posted inline
+        assert gh_comments[0]["path"] == "a.py" and gh_comments[0]["line"] == 10
+
+        body = mock_pr.create_review.call_args[1]["body"]
+        assert "could not be anchored" in body.lower()  # unanchored findings surfaced
+        assert "999" in body
+
+
+class TestPostReviewIdempotentRepost:
+    """Re-posting must replace prior bot artifacts, not stack duplicates."""
+
+    @patch("app.services.reviewer.get_pr_patches", return_value=[])
+    @patch("app.services.reviewer.get_github_client")
+    def test_deletes_prior_marked_artifacts_before_posting(self, mock_client, mock_patches):
+        marker = "<!-- bot4bread:ai-review -->"
+        bot_inline = MagicMock(); bot_inline.body = f"{marker}\nold inline"
+        human_inline = MagicMock(); human_inline.body = "a human comment"
+        bot_issue = MagicMock(); bot_issue.body = f"{marker}\nold summary"
+
+        mock_pr = MagicMock()
+        mock_pr.get_review_comments.return_value = [bot_inline, human_inline]
+        mock_pr.get_issue_comments.return_value = [bot_issue]
+        mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr
+
+        result = {"risk_level": "low", "summary": "new review", "comments": []}
+
+        from app.services.reviewer import post_review
+        post_review("org/repo", 42, result, head_sha="sha")
+
+        bot_inline.delete.assert_called_once()   # our prior artifact removed
+        bot_issue.delete.assert_called_once()
+        human_inline.delete.assert_not_called()  # human comments untouched

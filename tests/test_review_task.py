@@ -352,3 +352,107 @@ class TestRunReviewCheckRun:
         run_review.__wrapped__.__func__(mock_task, "org/repo", 42)
 
         mock_feedback.assert_called_once_with("org/repo", 42)
+
+
+class TestRunReviewHeadShaPinning:
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha")
+    def test_uses_event_head_sha_not_live_head(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
+    ):
+        """When head_sha is supplied by the webhook, the task pins to it and never refetches HEAD."""
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 1, "total_input_tokens": 100, "traces": [],
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-pin"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "org/repo", 42, "evt_sha", "delivery-1")
+
+        mock_sha.assert_not_called()  # did not refetch live HEAD
+        config = mock_graph.return_value.invoke.call_args.kwargs.get("config")
+        assert config["configurable"]["thread_id"] == "org/repo:42:evt_sha"
+        assert mock_post.call_args.kwargs.get("head_sha") == "evt_sha"
+
+
+class TestRunReviewRetryClassification:
+    def _make_task(self):
+        mock_task = MagicMock()
+        mock_task.request.id = "test-retry"
+        mock_task.request.retries = 0
+        mock_task.max_retries = 3
+        return mock_task
+
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_terminal_4xx_does_not_retry(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
+    ):
+        """A 404 (PR gone) is terminal — dead-letter instead of looping retries."""
+        from github import GithubException
+        mock_graph.return_value.invoke.side_effect = GithubException(404, {}, {})
+
+        mock_task = self._make_task()
+        from app.tasks.review import run_review
+        # Should return normally (dead-lettered), not raise
+        run_review.__wrapped__.__func__(mock_task, "org/repo", 42, "abc123", "d1")
+
+        mock_task.retry.assert_not_called()
+
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_transient_5xx_retries(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
+    ):
+        """A 503 is transient — the task should retry."""
+        import pytest
+        from github import GithubException
+        mock_graph.return_value.invoke.side_effect = GithubException(503, {}, {})
+
+        mock_task = self._make_task()
+        # raise self.retry(...) — emulate Celery by having retry raise a sentinel
+        sentinel = RuntimeError("retried")
+        mock_task.retry.return_value = sentinel
+
+        from app.tasks.review import run_review
+        with pytest.raises(RuntimeError, match="retried"):
+            run_review.__wrapped__.__func__(mock_task, "org/repo", 42, "abc123", "d1")
+
+        mock_task.retry.assert_called_once()
