@@ -36,6 +36,7 @@ def _make_state(**overrides) -> dict:
         "compressed": False,
         "prior_comments": [],
         "last_reviewed_sha": "",
+        "repo_config": {},
     }
     base.update(overrides)
     return base

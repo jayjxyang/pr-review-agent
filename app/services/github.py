@@ -49,11 +49,15 @@ class FilePatch:
     patch: str  # unified diff content for this file
 
 
-def _should_skip(filename: str) -> bool:
+def _should_skip(filename: str, extra_patterns: list[str] | None = None) -> bool:
     name = filename.split("/")[-1]  # match against basename only for most patterns
     for pattern in _SKIP_PATTERNS:
         if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(filename, pattern):
             return True
+    if extra_patterns:
+        for pattern in extra_patterns:
+            if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(filename, pattern):
+                return True
     return False
 
 
@@ -63,7 +67,7 @@ def _github_client() -> Github:
     return Github(get_settings().github_app_token)
 
 
-def get_pr_patches(repo_full_name: str, pr_number: int) -> list[FilePatch]:
+def get_pr_patches(repo_full_name: str, pr_number: int, *, extra_skip_patterns: list[str] | None = None) -> list[FilePatch]:
     """Fetch the diff for every reviewable file in the PR.
 
     Returns a list of FilePatch objects, one per file.  Binary files (no patch)
@@ -88,7 +92,7 @@ def get_pr_patches(repo_full_name: str, pr_number: int) -> list[FilePatch]:
     skipped = 0
 
     for f in pr.get_files():
-        if _should_skip(f.filename):
+        if _should_skip(f.filename, extra_patterns=extra_skip_patterns):
             skipped += 1
             continue
         if not f.patch:  # binary files have no patch attribute
