@@ -17,6 +17,9 @@ env/
 # Environment variables
 .env
 
+# Private keys
+*.pem
+
 # IDE
 .idea/
 .vscode/
