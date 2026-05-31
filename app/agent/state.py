@@ -42,3 +42,5 @@ class ReviewState(TypedDict):
     last_reviewed_sha: str
     # Per-repo config
     repo_config: dict
+    # Pre-graph secret scan findings
+    secret_findings: list[dict]
