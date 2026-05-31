@@ -40,3 +40,6 @@ htmlcov/
 
 # Worktrees
 .worktrees/
+
+# Personal interview prep (not for publishing)
+docs/INTERVIEW_PREP.md

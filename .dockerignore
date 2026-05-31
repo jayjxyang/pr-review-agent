@@ -13,5 +13,3 @@ venv
 docs
 tests
 *.md
-DEBUG_LOG.md
-PROJECT_OVERVIEW.md
