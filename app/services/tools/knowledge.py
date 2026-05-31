@@ -58,8 +58,9 @@ def _query_review_history_impl(session: Session, repo: str, file_path: str = Non
 
     output = []
     for rc in results:
+        feedback_tag = f" [FEEDBACK: {rc.feedback}]" if rc.feedback else ""
         output.append(
-            f"- PR #{rc.review.pr_number} | {rc.filename}:L{rc.line} [{rc.severity}]\n"
+            f"- PR #{rc.review.pr_number} | {rc.filename}:L{rc.line} [{rc.severity}]{feedback_tag}\n"
             f"  {rc.comment}"
         )
     return "\n".join(output)

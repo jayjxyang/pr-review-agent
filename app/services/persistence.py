@@ -3,6 +3,7 @@
 from app.core.database import SessionLocal
 from app.core.logging import get_logger
 from app.models.review import Review, ReviewComment, AgentTrace
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -148,6 +149,63 @@ def update_github_comment_ids(review_id: int, github_comment_ids: list[int]) -> 
             session.close()
     except Exception as exc:
         logger.warning("update_github_comment_ids_failed", error=str(exc))
+
+
+def collect_feedback(repo: str, pr_number: int) -> None:
+    """Collect reactions on bot comments from the most recent review.
+    Updates feedback column: 'false_positive' (thumbs down) or 'helpful' (thumbs up).
+    If both present, thumbs down wins (conservative).
+    """
+    try:
+        session = SessionLocal()
+        try:
+            review = (
+                session.query(Review)
+                .filter(Review.repo == repo, Review.pr_number == pr_number)
+                .order_by(Review.created_at.desc())
+                .first()
+            )
+            if not review:
+                return
+
+            comments = (
+                session.query(ReviewComment)
+                .filter(
+                    ReviewComment.review_id == review.id,
+                    ReviewComment.github_comment_id.isnot(None),
+                    ReviewComment.feedback.is_(None),
+                )
+                .all()
+            )
+            if not comments:
+                return
+
+            gh = get_github_client()
+            pr = gh.get_repo(repo).get_pull(pr_number)
+
+            for comment in comments:
+                try:
+                    gh_comment = pr.get_review_comment(comment.github_comment_id)
+                    reactions = list(gh_comment.get_reactions())
+                    has_thumbs_down = any(r.content == "-1" for r in reactions)
+                    has_thumbs_up = any(r.content == "+1" for r in reactions)
+                    if has_thumbs_down:
+                        comment.feedback = "false_positive"
+                    elif has_thumbs_up:
+                        comment.feedback = "helpful"
+                except Exception as exc:
+                    logger.debug("reaction_fetch_failed", comment_id=comment.github_comment_id, error=str(exc))
+                    continue
+
+            session.commit()
+            logger.info("feedback_collected", repo=repo, pr=pr_number)
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("collect_feedback_failed", error=str(exc), repo=repo, pr=pr_number)
 
 
 def resolve_comments(comment_ids: list[int]) -> None:
