@@ -15,6 +15,8 @@ import json
 import hashlib
 from functools import lru_cache
 
+from tenacity import retry, stop_after_attempt, wait_none, retry_if_exception_type
+from openai import APITimeoutError, RateLimitError
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langgraph.graph import StateGraph, END
@@ -52,6 +54,17 @@ def _build_reason_llm() -> ChatOpenAI:
         api_key=settings.ai_gateway_key,
         temperature=0,
     )
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_none(),
+    retry=retry_if_exception_type((APITimeoutError, RateLimitError)),
+    reraise=True,
+)
+def _invoke_llm(llm, messages):
+    """Invoke LLM with retry on transient API errors."""
+    return llm.invoke(messages)
 
 
 # ── Nodes ──────────────────────────────────────────────
@@ -101,7 +114,7 @@ def scan_call(state: ReviewState) -> dict:
             HumanMessage(content=human_content),
         ] + messages
 
-    response = llm.invoke(messages)
+    response = _invoke_llm(llm, messages)
     logger.info("scan_call", round=state["round_count"] + 1)
 
     token_usage = response.usage_metadata or {}
@@ -193,7 +206,7 @@ def deep_review(state: ReviewState) -> dict:
     prompt = DEEP_REVIEW_PROMPT.format(reason=state.get("escalate_reason", "unknown"))
 
     from langchain_core.messages import SystemMessage, HumanMessage
-    response = llm.invoke([
+    response = _invoke_llm(llm, [
         SystemMessage(content=prompt),
         HumanMessage(content=context),
     ])
@@ -321,7 +334,7 @@ def compress_context(state: ReviewState) -> dict:
     if len(tool_results_text) > 30000:
         tool_results_text = tool_results_text[:30000] + "\n\n[input truncated for compression]"
 
-    response = llm.invoke([
+    response = _invoke_llm(llm, [
         SystemMessage(content=COMPRESS_PROMPT),
         HumanMessage(content=tool_results_text),
     ])

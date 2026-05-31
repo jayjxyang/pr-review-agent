@@ -1,6 +1,7 @@
 """Tests for agent graph routing, parsing, and control tools."""
 
 import json
+import pytest
 from unittest.mock import patch, MagicMock
 
 from langchain_core.messages import AIMessage, ToolMessage
@@ -654,3 +655,48 @@ class TestIgnorePathsInjection:
 
         system_msg = captured["messages"][0]
         assert "## Ignored Paths" not in system_msg.content
+
+
+# ── LLM retry ─────────────────────────────────────────
+
+
+class TestInvokeLlmRetry:
+    def test_retries_on_timeout(self):
+        """_invoke_llm retries on APITimeoutError."""
+        from app.agent.graph import _invoke_llm
+        from openai import APITimeoutError
+
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = "ok"
+        mock_llm.invoke.side_effect = [
+            APITimeoutError(request=MagicMock()),
+            mock_response,
+        ]
+
+        result = _invoke_llm(mock_llm, [])
+        assert result == mock_response
+        assert mock_llm.invoke.call_count == 2
+
+    def test_does_not_retry_on_value_error(self):
+        """_invoke_llm does NOT retry on non-API errors."""
+        from app.agent.graph import _invoke_llm
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = ValueError("bad input")
+
+        with pytest.raises(ValueError):
+            _invoke_llm(mock_llm, [])
+        assert mock_llm.invoke.call_count == 1
+
+    def test_raises_after_max_retries(self):
+        """_invoke_llm raises after exhausting retries."""
+        from app.agent.graph import _invoke_llm
+        from openai import APITimeoutError
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = APITimeoutError(request=MagicMock())
+
+        with pytest.raises(APITimeoutError):
+            _invoke_llm(mock_llm, [])
+        assert mock_llm.invoke.call_count == 3
