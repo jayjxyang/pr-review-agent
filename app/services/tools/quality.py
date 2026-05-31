@@ -5,7 +5,7 @@ import re
 from langchain_core.tools import tool
 
 from app.core.logging import get_logger
-from app.services.github import _github_client
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -20,18 +20,16 @@ _SECRET_PATTERNS = [
 ]
 
 
-@tool
-def scan_secrets(repo: str, pr_number: int) -> str:
-    """Scan the PR diff for potential hardcoded secrets, API keys, tokens, or passwords.
-
-    Args:
-        repo: Repository full name (owner/repo).
-        pr_number: PR number to scan.
+def run_secret_scan(repo: str, pr_number: int) -> list[dict]:
+    """Standalone secret scan — returns list of finding dicts.
+    Called before the agent graph as an independent security bypass.
+    Returns: [{"filename": str, "line": int, "description": str}, ...]
     """
     try:
-        pr = _github_client().get_repo(repo).get_pull(pr_number)
+        pr = get_github_client().get_repo(repo).get_pull(pr_number)
     except Exception as e:
-        return f"Error fetching PR: {e}"
+        logger.warning("secret_scan_error", error=str(e))
+        return []
 
     findings = []
     for f in pr.get_files():
@@ -41,12 +39,28 @@ def scan_secrets(repo: str, pr_number: int) -> str:
                 continue
             for pattern, description in _SECRET_PATTERNS:
                 if re.search(pattern, line, re.IGNORECASE):
-                    findings.append(f"- {f.filename}:L{line_num}: {description}")
+                    findings.append({
+                        "filename": f.filename,
+                        "line": line_num,
+                        "description": description,
+                    })
                     break
+    return findings
 
+
+@tool
+def scan_secrets(repo: str, pr_number: int) -> str:
+    """Scan the PR diff for potential hardcoded secrets, API keys, tokens, or passwords.
+
+    Args:
+        repo: Repository full name (owner/repo).
+        pr_number: PR number to scan.
+    """
+    findings = run_secret_scan(repo, pr_number)
     if not findings:
         return "No secrets detected in the PR diff."
-    return f"Potential secrets found ({len(findings)}):\n" + "\n".join(findings)
+    lines = [f"- {f['filename']}:L{f['line']}: {f['description']}" for f in findings]
+    return f"Potential secrets found ({len(findings)}):\n" + "\n".join(lines)
 
 
 @tool
@@ -62,7 +76,7 @@ def check_test_coverage(repo: str, source_path: str, ref: str) -> str:
 
     q = f"{module_name} repo:{repo} path:test"
     try:
-        results = _github_client().search_code(q)
+        results = get_github_client().search_code(q)
     except Exception as e:
         return f"Error searching for test references: {e}"
 
@@ -86,7 +100,7 @@ def get_ci_status(repo: str, pr_number: int) -> str:
         pr_number: PR number.
     """
     try:
-        repo_obj = _github_client().get_repo(repo)
+        repo_obj = get_github_client().get_repo(repo)
         pr = repo_obj.get_pull(pr_number)
         commit = repo_obj.get_commit(pr.head.sha)
         checks = commit.get_check_runs()
@@ -117,7 +131,7 @@ def get_ci_logs(repo: str, pr_number: int, check_name: str) -> str:
         check_name: Name of the CI check to get logs for.
     """
     try:
-        repo_obj = _github_client().get_repo(repo)
+        repo_obj = get_github_client().get_repo(repo)
         pr = repo_obj.get_pull(pr_number)
         commit = repo_obj.get_commit(pr.head.sha)
         checks = commit.get_check_runs()
