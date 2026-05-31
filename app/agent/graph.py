@@ -80,8 +80,13 @@ def scan_call(state: ReviewState) -> dict:
                 prior_comments=formatted_comments,
             )
 
-        # Inject tech stack from repo config
+        # Inject per-repo config into prompt
         repo_config = state.get("repo_config", {})
+        ignore_paths = repo_config.get("ignore_paths", [])
+        if ignore_paths:
+            system_prompt += "\n\n## Ignored Paths\nDo NOT review files matching these patterns — they are excluded by repo config:\n"
+            system_prompt += "\n".join(f"- `{p}`" for p in ignore_paths)
+
         tech_stack = repo_config.get("tech_stack", {})
         if tech_stack:
             tech_lines = []

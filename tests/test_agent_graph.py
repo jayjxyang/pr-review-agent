@@ -592,3 +592,54 @@ class TestTechStackInjection:
 
         system_msg = captured["messages"][0]
         assert "## Project Tech Stack" not in system_msg.content
+
+
+# ── Ignore paths prompt injection ────────────────────
+
+
+class TestIgnorePathsInjection:
+    def test_scan_call_injects_ignore_paths(self, monkeypatch):
+        """When repo_config has ignore_paths, they're injected into the system prompt."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state(
+            repo_config={"ignore_paths": ["generated/**", "docs/**"]}
+        )
+
+        scan_call(state)
+
+        system_msg = captured["messages"][0]
+        assert "## Ignored Paths" in system_msg.content
+        assert "generated/**" in system_msg.content
+        assert "docs/**" in system_msg.content
+
+    def test_scan_call_no_ignore_paths_without_config(self, monkeypatch):
+        """Without ignore_paths, no ignored paths section in prompt."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state(repo_config={})
+
+        scan_call(state)
+
+        system_msg = captured["messages"][0]
+        assert "## Ignored Paths" not in system_msg.content
