@@ -1,0 +1,17 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+*.pem
+__pycache__
+*.pyc
+.pytest_cache
+.mypy_cache
+.venv
+venv
+docs
+tests
+*.md
+DEBUG_LOG.md
+PROJECT_OVERVIEW.md
