@@ -1,6 +1,8 @@
 """Celery task — orchestrates the full review pipeline using the LangGraph agent."""
 
+import requests
 from celery import Task
+from github import GithubException
 from langgraph.errors import GraphRecursionError
 
 from app.core.celery_app import celery_app
@@ -17,6 +19,22 @@ from app.services.tools.quality import run_secret_scan
 
 logger = get_logger(__name__)
 
+# Only transient failures (rate limit / 5xx / network) are worth retrying.
+# 4xx like 404 (PR deleted) or 422 (unprocessable) are terminal — retrying
+# just re-runs all side effects without ever succeeding.
+_RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, (requests.Timeout, requests.ConnectionError)):
+        return True
+    if isinstance(exc, GithubException):
+        return exc.status in _RETRYABLE_STATUS
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return exc.response.status_code in _RETRYABLE_STATUS
+    # Unknown error type: assume transient, but bounded by max_retries.
+    return True
+
 
 @celery_app.task(
     name="tasks.run_review",
@@ -26,7 +44,13 @@ logger = get_logger(__name__)
     default_retry_delay=60,
     acks_late=True,
 )
-def run_review(self: Task, repo_full_name: str, pr_number: int):
+def run_review(
+    self: Task,
+    repo_full_name: str,
+    pr_number: int,
+    head_sha: str | None = None,
+    delivery_id: str | None = None,
+):
     """
     End-to-end PR review pipeline:
     1. Collect feedback on prior review (reactions)
@@ -35,8 +59,17 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
     4. Build graph and invoke with PR context
     5. Compute conclusion and update Check Run
     6. Persist results, post review
+
+    head_sha pins the review to the commit that triggered the webhook, so a
+    retry reviews the same commit instead of a possibly-newer HEAD. delivery_id
+    is the correlation id linking this run back to the originating webhook.
     """
-    log = logger.bind(repo=repo_full_name, pr=pr_number, task_id=self.request.id)
+    log = logger.bind(
+        repo=repo_full_name,
+        pr=pr_number,
+        task_id=self.request.id,
+        delivery_id=delivery_id,
+    )
     log.info("review_started", attempt=self.request.retries + 1)
 
     check_run_id = None
@@ -44,7 +77,9 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
         # 0. Collect feedback from prior review reactions
         collect_feedback(repo_full_name, pr_number)
 
-        ref = get_pr_head_sha(repo_full_name, pr_number)
+        # Prefer the sha from the triggering event; fall back to live HEAD only
+        # if it wasn't provided (e.g. tasks queued before this field existed).
+        ref = head_sha or get_pr_head_sha(repo_full_name, pr_number)
         log.info("pr_ref_resolved", ref=ref)
 
         # Load per-repo config
@@ -153,14 +188,16 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             log.info("prior_comments_resolved", count=len(resolved_ids))
 
         # 8. Post review to GitHub and store comment IDs
-        github_comment_ids = post_review(repo_full_name, pr_number, result)
+        github_comment_ids = post_review(repo_full_name, pr_number, result, head_sha=ref)
         if review_id and github_comment_ids:
             update_github_comment_ids(review_id, github_comment_ids)
 
         log.info("review_posted")
 
     except Exception as exc:
-        # Update Check Run to failure on unexpected error
+        # Always surface failure on the Check Run so the PR never hangs on a
+        # stale in_progress state. create_check_run is idempotent (reuses by
+        # sha), so this doesn't spawn duplicate runs across retries.
         try:
             if check_run_id:
                 update_check_run(
@@ -169,7 +206,21 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
                 )
         except Exception:
             pass
-        log.error("review_failed", error=str(exc), attempt=self.request.retries + 1)
-        raise self.retry(exc=exc)
+
+        retryable = _is_retryable(exc)
+        retries = self.request.retries
+        if retryable and retries < self.max_retries:
+            log.warning("review_retrying", error=str(exc), attempt=retries + 1)
+            raise self.retry(exc=exc)
+
+        # Terminal: non-retryable error, or retries exhausted. Dead-letter with
+        # a clear log line instead of silently raising into the void.
+        log.error(
+            "review_dead_lettered",
+            error=str(exc),
+            attempts=retries + 1,
+            retryable=retryable,
+        )
+        return
 
     log.info("review_completed")

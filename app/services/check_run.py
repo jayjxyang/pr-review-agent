@@ -38,11 +38,56 @@ def _gh_headers() -> dict:
     }
 
 
+def _find_existing_check_run(repo_full_name: str, head_sha: str, external_id: str) -> int | None:
+    """Probe for an existing Bot4Bread check run on this commit. Returns its id, or None.
+
+    Non-200 responses, network errors, and malformed payloads are swallowed so the
+    caller can safely fall back to creating a fresh check run.
+    """
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{repo_full_name}/commits/{head_sha}/check-runs",
+            headers=_gh_headers(),
+            params={"check_name": _CHECK_NAME},
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        logger.warning("check_run_lookup_failed", repo=repo_full_name, error=str(exc))
+        return None
+
+    if response.status_code != 200:
+        logger.warning("check_run_lookup_non_200", repo=repo_full_name, status=response.status_code)
+        return None
+
+    runs = response.json().get("check_runs", [])
+    # Prefer an exact external_id match; fall back to name match for runs created
+    # before external_id was set (older runs lack the field).
+    for run in runs:
+        if run.get("external_id") == external_id:
+            return run.get("id")
+    for run in runs:
+        if run.get("name") == _CHECK_NAME:
+            return run.get("id")
+    return None
+
+
 def create_check_run(repo_full_name: str, head_sha: str) -> int | None:
-    """Create a Check Run in 'in_progress' status. Returns check_run_id, or None in PAT mode."""
+    """Create a Check Run in 'in_progress' status. Returns check_run_id, or None in PAT mode.
+
+    Uses a stable external_id and a find-or-create probe so that at-least-once Celery
+    retries (which may run this task more than once for the same commit) reuse the
+    existing check run instead of spawning duplicate "Bot4Bread" runs on the commit.
+    """
     if not is_app_mode():
         logger.debug("check_run_skipped_pat_mode")
         return None
+
+    external_id = f"bot4bread:{head_sha}"
+
+    existing_id = _find_existing_check_run(repo_full_name, head_sha, external_id)
+    if existing_id is not None:
+        logger.info("check_run_reused", repo=repo_full_name, check_id=existing_id)
+        return existing_id
 
     response = requests.post(
         f"https://api.github.com/repos/{repo_full_name}/check-runs",
@@ -51,6 +96,7 @@ def create_check_run(repo_full_name: str, head_sha: str) -> int | None:
             "name": _CHECK_NAME,
             "head_sha": head_sha,
             "status": "in_progress",
+            "external_id": external_id,
         },
         timeout=30,
     )

@@ -24,6 +24,25 @@ def save_review(repo: str, pr_number: int, ref: str, result: dict) -> int | None
     try:
         session = SessionLocal()
         try:
+            # Idempotency: a Celery retry or duplicate execution for the same
+            # (repo, pr_number, reviewed_sha) must yield exactly one Review row.
+            # Delete any prior review for this natural key (its ReviewComment /
+            # AgentTrace children cascade away) before inserting the fresh one,
+            # so the latest data replaces stale rows instead of duplicating.
+            existing = (
+                session.query(Review)
+                .filter(
+                    Review.repo == repo,
+                    Review.pr_number == pr_number,
+                    Review.reviewed_sha == ref,
+                )
+                .all()
+            )
+            for prior in existing:
+                session.delete(prior)
+            if existing:
+                session.flush()
+
             review = Review(
                 repo=repo,
                 pr_number=pr_number,

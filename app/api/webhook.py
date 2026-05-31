@@ -51,13 +51,23 @@ async def github_webhook(
 
     pr_number = data["pull_request"]["number"]
     repo_full_name = data["repository"]["full_name"]
+    # Capture the HEAD sha from the triggering event itself, so retries review the
+    # exact commit that fired this webhook — not whatever HEAD happens to be later.
+    head_sha = data["pull_request"]["head"]["sha"]
 
-    # Immediately dispatch to Celery, return 202 within GitHub's 10s window
-    review_tasks.run_review.delay(repo_full_name, pr_number)
+    # Immediately dispatch to Celery, return 202 within GitHub's 10s window.
+    # delivery_id is propagated as a correlation id across the webhook -> task boundary.
+    review_tasks.run_review.delay(
+        repo_full_name,
+        pr_number,
+        head_sha=head_sha,
+        delivery_id=x_github_delivery,
+    )
     logger.info(
         "review_task_queued",
         repo=repo_full_name,
         pr=pr_number,
+        head_sha=head_sha,
         delivery_id=x_github_delivery,
     )
 

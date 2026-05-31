@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Index,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -31,6 +32,7 @@ class Review(Base):
 
     __table_args__ = (
         Index("idx_reviews_repo_pr", "repo", "pr_number"),
+        UniqueConstraint("repo", "pr_number", "reviewed_sha", name="uq_reviews_repo_pr_sha"),
     )
 
 
