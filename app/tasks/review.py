@@ -1,11 +1,13 @@
+"""Celery task — orchestrates the full review pipeline using the LangGraph agent."""
+
 from celery import Task
+
 from app.core.celery_app import celery_app
-from app.core.config import get_settings
 from app.core.logging import get_logger
-from app.services.chunker import chunk_diff
-from app.services.github import get_pr_patches
-from app.services.llm import ReviewResult, call_llm
+from app.agent import build_review_graph
 from app.services.reviewer import post_review
+from app.services.github import get_pr_head_sha, get_repo_config
+from app.services.persistence import save_review, get_last_review, resolve_comments
 
 logger = get_logger(__name__)
 
@@ -15,48 +17,97 @@ logger = get_logger(__name__)
     bind=True,
     ignore_result=True,
     max_retries=3,
-    default_retry_delay=60,  # seconds between retries
+    default_retry_delay=60,
     acks_late=True,
 )
 def run_review(self: Task, repo_full_name: str, pr_number: int):
     """
-    End-to-end PR review pipeline:
-    1. Fetch & filter PR diff (PyGithub)
-    2. Split diff into token-bounded chunks
-    3. Call LLM for each chunk, collect ReviewResults
-    4. Post aggregated review back to GitHub
+    End-to-end PR review using LangGraph agent:
+    1. Detect re-review (query PostgreSQL for prior review)
+    2. Build graph and invoke with PR context + prior comments
+    3. Persist results, resolve old comments
+    4. Post review to GitHub
     """
     log = logger.bind(repo=repo_full_name, pr=pr_number, task_id=self.request.id)
     log.info("review_started", attempt=self.request.retries + 1)
 
     try:
-        # Phase 2 — fetch & chunk
-        patches = get_pr_patches(repo_full_name, pr_number)
-        if not patches:
-            log.info("review_skipped", reason="no reviewable files")
-            return
+        ref = get_pr_head_sha(repo_full_name, pr_number)
+        log.info("pr_ref_resolved", ref=ref)
 
-        chunks = chunk_diff(patches, token_limit=get_settings().diff_token_limit)
-        log.info("chunks_ready", total=len(chunks))
+        # Load per-repo config
+        repo_config = get_repo_config(repo_full_name, ref)
+        ignore_paths = repo_config.get("ignore_paths", [])
+        if ignore_paths:
+            log.info("repo_config_ignore_paths", patterns=ignore_paths)
 
-        # Phase 3 — call LLM per chunk
-        results: list[ReviewResult] = []
-        for i, chunk in enumerate(chunks):
-            log.info("llm_call_start", chunk=i, tokens=chunk.token_count, files=len(chunk.files))
-            result = call_llm(chunk)
-            log.info("llm_call_done", chunk=i, comments=len(result.comments))
-            results.append(result)
+        # Re-review detection
+        last_review = get_last_review(repo_full_name, pr_number)
+        prior_comments = []
+        last_reviewed_sha = ""
 
-        # Phase 3 — post review back to GitHub
-        post_review(repo_full_name, pr_number, results)
+        if last_review:
+            last_reviewed_sha = last_review["reviewed_sha"]
+            prior_comments = last_review["comments"]
+            log.info(
+                "re_review_detected",
+                last_sha=last_reviewed_sha[:7],
+                unresolved_comments=len(prior_comments),
+            )
+
+        # Build and invoke graph
+        graph = build_review_graph()
+        result = graph.invoke({
+            "messages": [],
+            "repo": repo_full_name,
+            "pr_number": pr_number,
+            "ref": ref,
+            "risk_level": "",
+            "summary": "",
+            "comments": [],
+            "escalated": False,
+            "escalate_reason": "",
+            "round_count": 0,
+            "total_input_tokens": 0,
+            "tool_call_history": [],
+            "traces": [],
+            "compressed": False,
+            "prior_comments": prior_comments,
+            "last_reviewed_sha": last_reviewed_sha,
+            "repo_config": repo_config,
+        })
+
+        log.info(
+            "agent_complete",
+            risk=result["risk_level"],
+            escalated=result["escalated"],
+            comments=len(result["comments"]),
+            traces=len(result.get("traces", [])),
+        )
+
+        # Extract resolved prior comment IDs from agent output
+        resolved_ids = [
+            c["prior_comment_id"]
+            for c in result.get("comments", [])
+            if c.get("severity") == "resolved" and c.get("prior_comment_id")
+        ]
+
+        # Persist new review to PostgreSQL (exclude resolved-status entries — they're prior-review metadata)
+        save_result = dict(result)
+        save_result["comments"] = [c for c in result.get("comments", []) if c.get("severity") != "resolved"]
+        save_review(repo_full_name, pr_number, ref, save_result)
+
+        # Mark old comments as resolved
+        if resolved_ids:
+            resolve_comments(resolved_ids)
+            log.info("prior_comments_resolved", count=len(resolved_ids))
+
+        # Post review to GitHub
+        post_review(repo_full_name, pr_number, result)
+        log.info("review_posted")
 
     except Exception as exc:
-        log.error(
-            "review_failed",
-            error=str(exc),
-            attempt=self.request.retries + 1,
-            max_retries=self.max_retries,
-        )
+        log.error("review_failed", error=str(exc), attempt=self.request.retries + 1)
         raise self.retry(exc=exc)
 
     log.info("review_completed")
