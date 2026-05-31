@@ -7,7 +7,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 
-_CHECK_NAME = "CodeLens Review"
+_CHECK_NAME = "Bot4Bread"
 _MAX_ANNOTATIONS = 50  # GitHub API limit per update
 
 _SEVERITY_ANNOTATION = {

@@ -54,7 +54,7 @@ class TestCreateCheckRun:
         assert check_id == 42
         mock_post.assert_called_once()
         body = mock_post.call_args[1]["json"]
-        assert body["name"] == "CodeLens Review"
+        assert body["name"] == "Bot4Bread"
         assert body["head_sha"] == "abc123sha"
         assert body["status"] == "in_progress"
 
