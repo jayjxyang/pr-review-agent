@@ -44,6 +44,8 @@ class ReviewComment(Base):
     severity = Column(String(20), nullable=False, default="suggestion")
     comment = Column(Text, nullable=False)
     resolved = Column(Boolean, default=False)
+    feedback = Column(String(20), nullable=True)         # "false_positive" | "helpful" | None
+    github_comment_id = Column(Integer, nullable=True)   # GitHub's comment ID for reaction lookup
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     review = relationship("Review", back_populates="comments")

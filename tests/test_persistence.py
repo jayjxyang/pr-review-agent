@@ -228,3 +228,49 @@ class TestResolveComments:
     def test_ignores_invalid_ids(self, monkeypatch):
         _setup_test_db(monkeypatch)
         resolve_comments([9999])  # Should not raise
+
+
+class TestFeedbackColumn:
+    def test_review_comment_has_feedback_field(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        review = Review(
+            repo="org/repo", pr_number=42, risk_level="low",
+            summary="OK", reviewed_sha="abc123",
+        )
+        session.add(review)
+        session.flush()
+        comment = ReviewComment(
+            review_id=review.id, filename="a.py", line=10,
+            severity="warning", comment="issue",
+            feedback="false_positive",
+            github_comment_id=12345,
+        )
+        session.add(comment)
+        session.commit()
+
+        loaded = session.get(ReviewComment, comment.id)
+        assert loaded.feedback == "false_positive"
+        assert loaded.github_comment_id == 12345
+        session.close()
+
+    def test_feedback_defaults_to_none(self, monkeypatch):
+        session_factory = _setup_test_db(monkeypatch)
+        session = session_factory()
+        review = Review(
+            repo="org/repo", pr_number=42, risk_level="low",
+            summary="OK", reviewed_sha="abc123",
+        )
+        session.add(review)
+        session.flush()
+        comment = ReviewComment(
+            review_id=review.id, filename="a.py", line=10,
+            severity="warning", comment="issue",
+        )
+        session.add(comment)
+        session.commit()
+
+        loaded = session.get(ReviewComment, comment.id)
+        assert loaded.feedback is None
+        assert loaded.github_comment_id is None
+        session.close()
