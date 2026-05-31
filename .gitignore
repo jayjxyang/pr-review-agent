@@ -41,5 +41,5 @@ htmlcov/
 # Worktrees
 .worktrees/
 
-# Personal interview prep (not for publishing)
-docs/INTERVIEW_PREP.md
+# Local docs (design notes, interview prep) — not for publishing
+docs/
