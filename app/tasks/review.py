@@ -6,7 +6,7 @@ from app.core.celery_app import celery_app
 from app.core.logging import get_logger
 from app.agent import build_review_graph
 from app.services.reviewer import post_review
-from app.services.github import get_pr_head_sha
+from app.services.github import get_pr_head_sha, get_repo_config
 from app.services.persistence import save_review, get_last_review, resolve_comments
 
 logger = get_logger(__name__)
@@ -34,6 +34,12 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
     try:
         ref = get_pr_head_sha(repo_full_name, pr_number)
         log.info("pr_ref_resolved", ref=ref)
+
+        # Load per-repo config
+        repo_config = get_repo_config(repo_full_name, ref)
+        ignore_paths = repo_config.get("ignore_paths", [])
+        if ignore_paths:
+            log.info("repo_config_ignore_paths", patterns=ignore_paths)
 
         # Re-review detection
         last_review = get_last_review(repo_full_name, pr_number)
@@ -68,6 +74,7 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "compressed": False,
             "prior_comments": prior_comments,
             "last_reviewed_sha": last_reviewed_sha,
+            "repo_config": repo_config,
         })
 
         log.info(

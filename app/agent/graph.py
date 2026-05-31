@@ -80,6 +80,15 @@ def scan_call(state: ReviewState) -> dict:
                 prior_comments=formatted_comments,
             )
 
+        # Inject tech stack from repo config
+        repo_config = state.get("repo_config", {})
+        tech_stack = repo_config.get("tech_stack", {})
+        if tech_stack:
+            tech_lines = []
+            for key, value in tech_stack.items():
+                tech_lines.append(f"- {key.title()}: {value}")
+            system_prompt += "\n\n## Project Tech Stack\n" + "\n".join(tech_lines)
+
         human_content = f"Review PR #{state['pr_number']} in repository {state['repo']} (branch ref: {state['ref']})."
 
         messages = [

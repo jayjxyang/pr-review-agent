@@ -9,9 +9,10 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
     @patch("app.tasks.review.get_last_review")
+    @patch("app.tasks.review.get_repo_config", return_value={})
     @patch("app.tasks.review.get_pr_head_sha")
     def test_re_review_passes_prior_comments_to_graph(
-        self, mock_sha, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
     ):
         mock_sha.return_value = "newsha456"
         mock_last.return_value = {
@@ -45,9 +46,10 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
     @patch("app.tasks.review.get_last_review")
+    @patch("app.tasks.review.get_repo_config", return_value={})
     @patch("app.tasks.review.get_pr_head_sha")
     def test_first_review_has_empty_prior_comments(
-        self, mock_sha, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
     ):
         mock_sha.return_value = "abc123"
         mock_last.return_value = None
@@ -74,9 +76,10 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
     @patch("app.tasks.review.get_last_review")
+    @patch("app.tasks.review.get_repo_config", return_value={})
     @patch("app.tasks.review.get_pr_head_sha")
     def test_resolved_comments_are_persisted(
-        self, mock_sha, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,  # noqa: E501
     ):
         mock_sha.return_value = "newsha"
         mock_last.return_value = {
@@ -107,3 +110,44 @@ class TestRunReviewReReview:
         # Verify resolved comments are excluded from save_review
         save_call_result = mock_save.call_args[0][3]  # 4th positional arg is result dict
         assert all(c.get("severity") != "resolved" for c in save_call_result["comments"])
+
+
+class TestRunReviewConfig:
+    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config")
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_run_review_loads_config(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+    ):
+        """run_review loads repo config and passes it to the graph."""
+        mock_config.return_value = {
+            "ignore_paths": ["generated/**", "docs/**"],
+            "tech_stack": {"language": "python"},
+        }
+
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 2, "total_input_tokens": 3000,
+            "traces": [], "prior_comments": [], "last_reviewed_sha": "",
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-config-task"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "owner/repo", 42)
+
+        # Verify config was loaded with the correct ref
+        mock_config.assert_called_once_with("owner/repo", "abc123")
+
+        # Verify graph was invoked with repo_config
+        invoke_args = mock_graph.return_value.invoke.call_args[0][0]
+        assert invoke_args["repo_config"] == {
+            "ignore_paths": ["generated/**", "docs/**"],
+            "tech_stack": {"language": "python"},
+        }

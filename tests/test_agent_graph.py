@@ -534,3 +534,61 @@ class TestReReviewInjection:
 
         system_content = captured["messages"][0].content
         assert "Re-review Context" not in system_content
+
+
+# ── Tech stack prompt injection ──────────────────────
+
+
+class TestTechStackInjection:
+    def test_scan_call_injects_tech_stack(self, monkeypatch):
+        """When repo_config has tech_stack, it's injected into the system prompt."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state(
+            repo_config={
+                "tech_stack": {
+                    "language": "python",
+                    "framework": "fastapi",
+                    "testing": "pytest",
+                }
+            }
+        )
+
+        scan_call(state)
+
+        system_msg = captured["messages"][0]
+        assert "## Project Tech Stack" in system_msg.content
+        assert "Language: python" in system_msg.content
+        assert "Framework: fastapi" in system_msg.content
+        assert "Testing: pytest" in system_msg.content
+
+    def test_scan_call_no_tech_stack_without_config(self, monkeypatch):
+        """Without repo_config tech_stack, no tech stack section in prompt."""
+        captured = {}
+
+        def mock_invoke(messages, **kwargs):
+            captured["messages"] = messages
+            resp = AIMessage(content="Reviewing...")
+            resp.usage_metadata = {"input_tokens": 100}
+            return resp
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value.invoke = mock_invoke
+        monkeypatch.setattr("app.agent.graph._build_scan_llm", lambda: mock_llm)
+
+        state = _make_state(repo_config={})
+
+        scan_call(state)
+
+        system_msg = captured["messages"][0]
+        assert "## Project Tech Stack" not in system_msg.content
