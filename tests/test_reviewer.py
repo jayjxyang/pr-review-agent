@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 
 class TestPostReviewReReview:
-    @patch("app.services.reviewer._github_client")
+    @patch("app.services.reviewer.get_github_client")
     def test_filters_resolved_comments_from_posting(self, mock_client):
         mock_pr = MagicMock()
         mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr
@@ -27,7 +27,7 @@ class TestPostReviewReReview:
         assert len(gh_comments) == 1
         assert gh_comments[0]["path"] == "a.py"
 
-    @patch("app.services.reviewer._github_client")
+    @patch("app.services.reviewer.get_github_client")
     def test_includes_resolution_summary(self, mock_client):
         mock_pr = MagicMock()
         mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr
@@ -50,7 +50,7 @@ class TestPostReviewReReview:
         assert "2" in body
         assert "resolved" in body.lower()
 
-    @patch("app.services.reviewer._github_client")
+    @patch("app.services.reviewer.get_github_client")
     def test_all_resolved_no_new_issues(self, mock_client):
         mock_pr = MagicMock()
         mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.core.logging import get_logger
 from app.models.review import Review, ReviewComment
-from app.services.github import _github_client
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -19,7 +19,7 @@ _RULES_DIR = ".ai-review/rules"
 def read_repo_rules(repo: str, ref: str) -> str:
     """Read the project's AI review rules from .ai-review/rules/ directory. Returns all rule files concatenated."""
     try:
-        contents = _github_client().get_repo(repo).get_contents(_RULES_DIR, ref=ref)
+        contents = get_github_client().get_repo(repo).get_contents(_RULES_DIR, ref=ref)
     except Exception:
         return "No .ai-review/rules/ directory found in this repository."
 

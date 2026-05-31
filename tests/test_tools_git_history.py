@@ -8,7 +8,7 @@ from app.services.tools.git_history import git_log, git_blame
 
 
 class TestGitLog:
-    @patch("app.services.tools.git_history._github_client")
+    @patch("app.services.tools.git_history.get_github_client")
     def test_returns_formatted_commits(self, mock_client):
         mock_commit = MagicMock()
         mock_commit.sha = "abc1234567890"
@@ -26,7 +26,7 @@ class TestGitLog:
         assert "Fix auth bug" in result
         assert "dev1" in result
 
-    @patch("app.services.tools.git_history._github_client")
+    @patch("app.services.tools.git_history.get_github_client")
     def test_with_path_filter(self, mock_client):
         mock_repo = MagicMock()
         mock_repo.get_commits.return_value = []
@@ -37,7 +37,7 @@ class TestGitLog:
         call_kwargs = mock_repo.get_commits.call_args
         assert call_kwargs[1].get("path") == "src/auth.py" or call_kwargs.kwargs.get("path") == "src/auth.py"
 
-    @patch("app.services.tools.git_history._github_client")
+    @patch("app.services.tools.git_history.get_github_client")
     def test_limits_results(self, mock_client):
         commits = []
         for i in range(15):
@@ -56,7 +56,7 @@ class TestGitLog:
         result = git_log.invoke({"repo": "org/repo", "ref": "main", "limit": 5})
         assert result.count("sha") == 5
 
-    @patch("app.services.tools.git_history._github_client")
+    @patch("app.services.tools.git_history.get_github_client")
     def test_error_handling(self, mock_client):
         mock_client.return_value.get_repo.side_effect = Exception("Not found")
         result = git_log.invoke({"repo": "org/repo", "ref": "main"})

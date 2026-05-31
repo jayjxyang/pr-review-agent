@@ -5,7 +5,7 @@ import base64
 from langchain_core.tools import tool
 
 from app.core.logging import get_logger
-from app.services.github import _github_client
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -17,7 +17,7 @@ _MAX_SEARCH_RESULTS = 20
 def read_file(repo: str, path: str, ref: str, start_line: int = None, end_line: int = None) -> str:
     """Read a file from the repository. Supports optional line range. Returns file content with line numbers."""
     try:
-        content_file = _github_client().get_repo(repo).get_contents(path, ref=ref)
+        content_file = getget_github_client().get_repo(repo).get_contents(path, ref=ref)
     except Exception as e:
         return f"Error: could not read {path}: {e}"
 
@@ -46,7 +46,7 @@ def search_code(repo: str, query: str, path_filter: str = None) -> str:
         q += f" path:{path_filter}"
 
     try:
-        results = _github_client().search_code(q)
+        results = get_github_client().search_code(q)
     except Exception as e:
         return f"Error searching: {e}"
 
@@ -95,7 +95,7 @@ def find_definition(repo: str, symbol: str, path_filter: str = None) -> str:
         q += f" path:{path_filter}"
 
     try:
-        results = _github_client().search_code(q)
+        results = get_github_client().search_code(q)
     except Exception as e:
         return f"Error searching for definition: {e}"
 

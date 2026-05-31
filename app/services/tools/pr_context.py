@@ -3,7 +3,7 @@
 from langchain_core.tools import tool
 
 from app.core.logging import get_logger
-from app.services.github import _github_client
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -14,7 +14,7 @@ _MAX_DIFF_LINES = 500
 def get_pr_info(repo: str, pr_number: int) -> str:
     """Get PR metadata: title, description, author, labels, and linked issues."""
     try:
-        pr = _github_client().get_repo(repo).get_pull(pr_number)
+        pr = get_github_client().get_repo(repo).get_pull(pr_number)
     except Exception as e:
         return f"Error fetching PR info: {e}"
 
@@ -40,7 +40,7 @@ def get_pr_info(repo: str, pr_number: int) -> str:
 def get_pr_changed_files(repo: str, pr_number: int) -> str:
     """Get the list of changed files in the PR with addition/deletion counts."""
     try:
-        pr = _github_client().get_repo(repo).get_pull(pr_number)
+        pr = get_github_client().get_repo(repo).get_pull(pr_number)
     except Exception as e:
         return f"Error fetching changed files: {e}"
     files = pr.get_files()
@@ -57,7 +57,7 @@ def get_pr_changed_files(repo: str, pr_number: int) -> str:
 def get_pr_diff(repo: str, pr_number: int, file_path: str) -> str:
     """Get the unified diff for a specific file in the PR. Use get_pr_changed_files first to see what files changed."""
     try:
-        pr = _github_client().get_repo(repo).get_pull(pr_number)
+        pr = get_github_client().get_repo(repo).get_pull(pr_number)
     except Exception as e:
         return f"Error fetching diff: {e}"
 

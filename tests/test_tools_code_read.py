@@ -6,7 +6,7 @@ from app.services.tools.code_read import find_definition
 
 
 class TestFindDefinition:
-    @patch("app.services.tools.code_read._github_client")
+    @patch("app.services.tools.code_read.get_github_client")
     def test_finds_python_def(self, mock_client):
         mock_item = MagicMock()
         mock_item.path = "src/auth.py"
@@ -16,19 +16,19 @@ class TestFindDefinition:
         result = find_definition.invoke({"repo": "org/repo", "symbol": "login"})
         assert "auth.py" in result
 
-    @patch("app.services.tools.code_read._github_client")
+    @patch("app.services.tools.code_read.get_github_client")
     def test_no_results(self, mock_client):
         mock_client.return_value.search_code.return_value = []
         result = find_definition.invoke({"repo": "org/repo", "symbol": "nonexistent"})
         assert "No definition found" in result
 
-    @patch("app.services.tools.code_read._github_client")
+    @patch("app.services.tools.code_read.get_github_client")
     def test_error_handling(self, mock_client):
         mock_client.return_value.search_code.side_effect = Exception("API error")
         result = find_definition.invoke({"repo": "org/repo", "symbol": "login"})
         assert "Error" in result
 
-    @patch("app.services.tools.code_read._github_client")
+    @patch("app.services.tools.code_read.get_github_client")
     def test_with_path_filter(self, mock_client):
         mock_client.return_value.search_code.return_value = []
         find_definition.invoke({"repo": "org/repo", "symbol": "login", "path_filter": "src/"})

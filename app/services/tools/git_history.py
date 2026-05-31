@@ -3,7 +3,7 @@
 from langchain_core.tools import tool
 
 from app.core.logging import get_logger
-from app.services.github import _github_client, graphql_query
+from app.services.github import get_github_client, graphql_query
 
 logger = get_logger(__name__)
 
@@ -47,7 +47,7 @@ def git_log(repo: str, ref: str = "HEAD", path: str = None, limit: int = 10) -> 
     """
     limit = min(limit, _MAX_COMMITS)
     try:
-        repo_obj = _github_client().get_repo(repo)
+        repo_obj = get_github_client().get_repo(repo)
         kwargs = {"sha": ref}
         if path:
             kwargs["path"] = path

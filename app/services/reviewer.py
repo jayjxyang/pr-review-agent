@@ -1,7 +1,7 @@
 """Post review results to GitHub as PR review comments."""
 
 from app.core.logging import get_logger
-from app.services.github import _github_client
+from app.services.github import get_github_client
 
 logger = get_logger(__name__)
 
@@ -15,7 +15,7 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
         result: Graph output dict with keys: risk_level, summary, comments.
                Comments with severity="resolved" are filtered out of inline posting.
     """
-    gh = _github_client()
+    gh = get_github_client()
     pr = gh.get_repo(repo_full_name).get_pull(pr_number)
 
     summary = result.get("summary", "")
