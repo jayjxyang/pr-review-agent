@@ -1,6 +1,7 @@
 """Tests for run_review re-review detection logic."""
 
 from unittest.mock import patch, MagicMock
+from langgraph.errors import GraphRecursionError
 
 
 class TestRunReviewReReview:
@@ -151,3 +152,63 @@ class TestRunReviewConfig:
             "ignore_paths": ["generated/**", "docs/**"],
             "tech_stack": {"language": "python"},
         }
+
+
+class TestRunReviewResilience:
+    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_graph_recursion_error_produces_degraded_result(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+    ):
+        """GraphRecursionError produces a degraded result instead of crashing."""
+        mock_graph.return_value.invoke.side_effect = GraphRecursionError("recursion limit")
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-recursion"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "owner/repo", 42)
+
+        # Verify a degraded result was saved
+        mock_save.assert_called_once()
+        saved_result = mock_save.call_args[0][3]
+        assert "recursion limit" in saved_result["summary"].lower()
+
+        # Verify review was still posted
+        mock_post.assert_called_once()
+
+    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.save_review")
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_graph_invoked_with_thread_id_config(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+    ):
+        """graph.invoke is called with a config containing thread_id for checkpointing."""
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 2, "total_input_tokens": 3000,
+            "traces": [], "prior_comments": [], "last_reviewed_sha": "",
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-thread-id"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "owner/repo", 42)
+
+        # Verify invoke was called with config containing thread_id
+        call_kwargs = mock_graph.return_value.invoke.call_args
+        # graph.invoke(state, config=config) — config is a keyword arg
+        config = call_kwargs.kwargs.get("config")
+        assert config is not None
+        assert config["configurable"]["thread_id"] == "owner/repo:42:abc123"

@@ -21,6 +21,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
+from langgraph.checkpoint.postgres import PostgresSaver
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -361,19 +362,28 @@ def compress_context(state: ReviewState) -> dict:
 
 # ── Graph Assembly ─────────────────────────────────────
 
-_compiled_graph = None
+
+def _get_checkpointer():
+    """Create a PostgresSaver checkpointer using the app's database URL.
+
+    Uses from_conn_string context manager, entering it to keep connection alive
+    for the lifetime of the worker process.
+    """
+    settings = get_settings()
+    cm = PostgresSaver.from_conn_string(settings.database_url)
+    saver = cm.__enter__()
+    saver.setup()
+    return saver
 
 
+@lru_cache(maxsize=1)
 def build_review_graph():
     """Return the cached compiled review graph (built once per process)."""
-    global _compiled_graph
-    if _compiled_graph is None:
-        _compiled_graph = _build_graph()
-    return _compiled_graph
+    return _build_graph()
 
 
-def _build_graph() -> StateGraph:
-    """Build and compile the review agent graph."""
+def _build_graph():
+    """Build and compile the review agent graph with checkpointer."""
     graph = StateGraph(ReviewState)
 
     # Nodes
@@ -407,4 +417,5 @@ def _build_graph() -> StateGraph:
     graph.add_edge("deep_review", END)
     graph.add_edge("parse_result", END)
 
-    return graph.compile()
+    checkpointer = _get_checkpointer()
+    return graph.compile(checkpointer=checkpointer, recursion_limit=100)

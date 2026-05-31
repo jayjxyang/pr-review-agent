@@ -1,6 +1,7 @@
 """Celery task — orchestrates the full review pipeline using the LangGraph agent."""
 
 from celery import Task
+from langgraph.errors import GraphRecursionError
 
 from app.core.celery_app import celery_app
 from app.core.logging import get_logger
@@ -55,9 +56,12 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
                 unresolved_comments=len(prior_comments),
             )
 
-        # Build and invoke graph
+        # Build and invoke graph with checkpointer thread_id
         graph = build_review_graph()
-        result = graph.invoke({
+        thread_id = f"{repo_full_name}:{pr_number}:{ref}"
+        config = {"configurable": {"thread_id": thread_id}}
+
+        initial_state = {
             "messages": [],
             "repo": repo_full_name,
             "pr_number": pr_number,
@@ -75,7 +79,19 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "prior_comments": prior_comments,
             "last_reviewed_sha": last_reviewed_sha,
             "repo_config": repo_config,
-        })
+        }
+
+        try:
+            result = graph.invoke(initial_state, config=config)
+        except GraphRecursionError:
+            log.error("graph_recursion_limit_hit")
+            result = {
+                "risk_level": "low",
+                "summary": "Review terminated: graph recursion limit reached.",
+                "comments": [],
+                "escalated": False,
+                "traces": [],
+            }
 
         log.info(
             "agent_complete",
