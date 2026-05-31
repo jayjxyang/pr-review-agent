@@ -123,6 +123,33 @@ def get_last_review(repo: str, pr_number: int) -> dict | None:
         return None
 
 
+def update_github_comment_ids(review_id: int, github_comment_ids: list[int]) -> None:
+    """Store GitHub comment IDs on ReviewComment rows for reaction tracking.
+    Maps by position — assumes github_comment_ids[i] corresponds to the i-th comment."""
+    if not github_comment_ids:
+        return
+    try:
+        session = SessionLocal()
+        try:
+            comments = (
+                session.query(ReviewComment)
+                .filter(ReviewComment.review_id == review_id)
+                .order_by(ReviewComment.id.asc())
+                .all()
+            )
+            for i, comment in enumerate(comments):
+                if i < len(github_comment_ids):
+                    comment.github_comment_id = github_comment_ids[i]
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.warning("update_github_comment_ids_failed", error=str(exc))
+
+
 def resolve_comments(comment_ids: list[int]) -> None:
     """Mark review comments as resolved by their IDs."""
     if not comment_ids:

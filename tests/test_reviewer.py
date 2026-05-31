@@ -70,3 +70,30 @@ class TestPostReviewReReview:
         mock_pr.create_issue_comment.assert_called_once()
         body = mock_pr.create_issue_comment.call_args[0][0]
         assert "resolved" in body.lower()
+
+
+class TestPostReviewReturnsCommentIds:
+    @patch("app.services.reviewer.get_github_client")
+    def test_returns_comment_ids_from_review(self, mock_client):
+        mock_pr = MagicMock()
+        mock_review = MagicMock()
+        mock_comment_1 = MagicMock()
+        mock_comment_1.id = 1001
+        mock_comment_2 = MagicMock()
+        mock_comment_2.id = 1002
+        mock_review.get_review_comments.return_value = [mock_comment_1, mock_comment_2]
+        mock_pr.create_review.return_value = mock_review
+        mock_client.return_value.get_repo.return_value.get_pull.return_value = mock_pr
+
+        result = {
+            "risk_level": "low",
+            "summary": "Issues found",
+            "comments": [
+                {"filename": "a.py", "line": 10, "severity": "warning", "comment": "Issue 1"},
+                {"filename": "b.py", "line": 20, "severity": "error", "comment": "Issue 2"},
+            ],
+        }
+
+        from app.services.reviewer import post_review
+        comment_ids = post_review("org/repo", 42, result)
+        assert comment_ids == [1001, 1002]

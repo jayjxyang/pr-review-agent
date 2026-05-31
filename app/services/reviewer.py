@@ -8,12 +8,15 @@ logger = get_logger(__name__)
 _SEVERITY_EMOJI = {"error": "🔴", "warning": "🟡", "suggestion": "🔵"}
 
 
-def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
+def post_review(repo_full_name: str, pr_number: int, result: dict) -> list[int]:
     """Post the agent's review to GitHub as a PR review with inline comments.
 
     Args:
         result: Graph output dict with keys: risk_level, summary, comments.
                Comments with severity="resolved" are filtered out of inline posting.
+
+    Returns:
+        List of GitHub comment IDs for the posted inline review comments.
     """
     gh = get_github_client()
     pr = gh.get_repo(repo_full_name).get_pull(pr_number)
@@ -27,7 +30,7 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
     active_comments = [c for c in all_comments if c.get("severity") != "resolved"]
 
     if not active_comments and not summary and not resolved:
-        return
+        return []
 
     # Build body with resolution summary if applicable
     body = f"## AI Review (risk: {risk_level})\n\n{summary}"
@@ -46,9 +49,14 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
 
     try:
         if gh_comments:
-            pr.create_review(body=body, event="COMMENT", comments=gh_comments)
+            review = pr.create_review(body=body, event="COMMENT", comments=gh_comments)
+            try:
+                return [rc.id for rc in review.get_review_comments()]
+            except Exception:
+                return []
         else:
             pr.create_issue_comment(body)
+            return []
     except Exception as exc:
         logger.warning("inline_review_failed_fallback", error=str(exc))
         fallback = body + "\n\n### Findings\n\n"
@@ -56,3 +64,4 @@ def post_review(repo_full_name: str, pr_number: int, result: dict) -> None:
             emoji = _SEVERITY_EMOJI.get(c.get("severity"), "🔵")
             fallback += f"- {emoji} **{c.get('filename', 'unknown')}:{c.get('line', '?')}** — {c.get('comment', '')}\n"
         pr.create_issue_comment(fallback)
+        return []
