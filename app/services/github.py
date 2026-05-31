@@ -1,4 +1,6 @@
 import fnmatch
+import jwt
+import time
 import requests
 from dataclasses import dataclass
 from functools import lru_cache
@@ -61,10 +63,87 @@ def _should_skip(filename: str, extra_patterns: list[str] | None = None) -> bool
     return False
 
 
-@lru_cache(maxsize=1)
-def _github_client() -> Github:
-    """Cached Github client — one instance per worker process."""
-    return Github(get_settings().github_app_token)
+# --- Auth section ---
+
+_token_cache: dict = {}
+
+
+def is_app_mode() -> bool:
+    """Return True if all GitHub App settings are configured."""
+    settings = get_settings()
+    return bool(
+        settings.github_app_id
+        and settings.github_app_private_key_path
+        and settings.github_app_installation_id
+    )
+
+
+def _create_jwt() -> str:
+    """Create a signed JWT for GitHub App authentication."""
+    settings = get_settings()
+    with open(settings.github_app_private_key_path, "r") as f:
+        private_key = f.read()
+    now = int(time.time())
+    payload = {
+        "iat": now - 60,
+        "exp": now + 600,
+        "iss": settings.github_app_id,
+    }
+    return jwt.encode(payload, private_key, algorithm="RS256")
+
+
+def _get_installation_token() -> str:
+    """Return a cached installation access token, refreshing if needed."""
+    cached = _token_cache.get("installation")
+    if cached and cached["expires_at"] > time.time() + 300:
+        return cached["token"]
+
+    settings = get_settings()
+    app_jwt = _create_jwt()
+    url = f"https://api.github.com/app/installations/{settings.github_app_installation_id}/access_tokens"
+    response = requests.post(
+        url,
+        headers={
+            "Authorization": f"Bearer {app_jwt}",
+            "Accept": "application/vnd.github+json",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()
+
+    # Parse ISO 8601 expiry to epoch seconds
+    from datetime import datetime, timezone
+    expires_at_str = data["expires_at"]
+    # Remove trailing Z and parse as UTC
+    expires_dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+    expires_epoch = expires_dt.timestamp()
+
+    _token_cache["installation"] = {
+        "token": data["token"],
+        "expires_at": expires_epoch,
+    }
+    return data["token"]
+
+
+def get_installation_token() -> str:
+    """Public wrapper for _get_installation_token."""
+    return _get_installation_token()
+
+
+def get_github_client() -> Github:
+    """Return a Github client using App mode or PAT fallback."""
+    settings = get_settings()
+    if is_app_mode():
+        return Github(login_or_token=_get_installation_token())
+    elif settings.github_app_token:
+        return Github(login_or_token=settings.github_app_token)
+    else:
+        raise RuntimeError("No GitHub credentials configured: set either App credentials or github_app_token")
+
+
+# Alias for backward compatibility — replaces the old @lru_cache function
+_github_client = get_github_client
 
 
 def get_pr_patches(repo_full_name: str, pr_number: int, *, extra_skip_patterns: list[str] | None = None) -> list[FilePatch]:
@@ -166,11 +245,12 @@ def get_repo_config(repo_full_name: str, ref: str) -> dict:
 def graphql_query(query: str, variables: dict) -> dict:
     """Execute a GitHub GraphQL query. Returns the 'data' portion of the response."""
     settings = get_settings()
+    token = _get_installation_token() if is_app_mode() else settings.github_app_token
     response = requests.post(
         "https://api.github.com/graphql",
         json={"query": query, "variables": variables},
         headers={
-            "Authorization": f"Bearer {settings.github_app_token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         },
         timeout=30,

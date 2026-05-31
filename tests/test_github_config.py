@@ -10,10 +10,7 @@ from app.services.github import get_repo_config
 
 @pytest.fixture(autouse=True)
 def _clear_github_cache():
-    from app.services.github import _github_client
-    _github_client.cache_clear()
     yield
-    _github_client.cache_clear()
 
 
 @patch("app.services.github._github_client")
