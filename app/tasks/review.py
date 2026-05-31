@@ -71,7 +71,7 @@ def run_review(self: Task, repo_full_name: str, pr_number: int):
             "total_input_tokens": 0,
             "tool_call_history": [],
             "traces": [],
-            "compressed": False,
+            "compress_count": 0,
             "prior_comments": prior_comments,
             "last_reviewed_sha": last_reviewed_sha,
             "repo_config": repo_config,

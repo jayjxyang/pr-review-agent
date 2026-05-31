@@ -33,7 +33,7 @@ def _make_state(**overrides) -> dict:
         "total_input_tokens": 0,
         "tool_call_history": [],
         "traces": [],
-        "compressed": False,
+        "compress_count": 0,
         "prior_comments": [],
         "last_reviewed_sha": "",
         "repo_config": {},
@@ -285,7 +285,7 @@ class TestCompressRouter:
         state = _make_state(
             messages=[AIMessage(content=""), tool_msg],
             round_count=5,
-            compressed=False,
+            compress_count=0,
         )
         assert tools_router(state) == "compress"
 
@@ -294,25 +294,36 @@ class TestCompressRouter:
         state = _make_state(
             messages=[AIMessage(content=""), tool_msg],
             round_count=3,
-            compressed=False,
+            compress_count=0,
         )
         assert tools_router(state) == "continue"
 
-    def test_no_compress_if_already_compressed(self):
+    def test_no_compress_right_after_compression(self):
+        """Round 6 with compress_count=1 should NOT compress (next at round 10)."""
         tool_msg = ToolMessage(content="file content", tool_call_id="1")
         state = _make_state(
             messages=[AIMessage(content=""), tool_msg],
-            round_count=7,
-            compressed=True,
+            round_count=6,
+            compress_count=1,
         )
         assert tools_router(state) == "continue"
+
+    def test_second_compress_at_round_10(self):
+        """Round 10 with compress_count=1 should trigger second compression."""
+        tool_msg = ToolMessage(content="file content", tool_call_id="1")
+        state = _make_state(
+            messages=[AIMessage(content=""), tool_msg],
+            round_count=10,
+            compress_count=1,
+        )
+        assert tools_router(state) == "compress"
 
     def test_compress_at_round_above_5(self):
         tool_msg = ToolMessage(content="file content", tool_call_id="1")
         state = _make_state(
             messages=[AIMessage(content=""), tool_msg],
             round_count=6,
-            compressed=False,
+            compress_count=0,
         )
         assert tools_router(state) == "compress"
 
@@ -335,7 +346,7 @@ class TestCompressContext:
         # Round 5 (most recent — should be preserved)
         messages.append(AIMessage(content="", tool_calls=[{"name": "get_pr_info", "args": {}, "id": "5"}]))
         messages.append(ToolMessage(content="PR #1: Fix auth bug", tool_call_id="5"))
-        return _make_state(messages=messages, round_count=5, compressed=False)
+        return _make_state(messages=messages, round_count=5, compress_count=0)
 
     @patch("app.agent.graph._build_scan_llm")
     def test_sets_compressed_flag(self, mock_build_llm):
@@ -348,7 +359,7 @@ class TestCompressContext:
 
         state = self._build_multi_round_state()
         result = compress_context(state)
-        assert result["compressed"] is True
+        assert result["compress_count"] == 1
 
     @patch("app.agent.graph._build_scan_llm")
     def test_reduces_message_count(self, mock_build_llm):
@@ -414,9 +425,9 @@ class TestCompressContext:
             AIMessage(content="", tool_calls=[{"name": "get_pr_info", "args": {}, "id": "1"}]),
             ToolMessage(content="PR info here", tool_call_id="1"),
         ]
-        state = _make_state(messages=messages, round_count=1, compressed=False)
+        state = _make_state(messages=messages, round_count=1, compress_count=0)
         result = compress_context(state)
-        assert result["compressed"] is True
+        assert result["compress_count"] == 1
         assert "messages" not in result  # No message replacement needed
         mock_build_llm.return_value.invoke.assert_not_called()
 

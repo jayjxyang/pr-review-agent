@@ -270,8 +270,10 @@ def tools_router(state: ReviewState) -> str:
         logger.warning("dead_loop_detected", tool=history[-1])
         return "finish"
 
-    # Check if context compression is needed
-    if state["round_count"] >= settings.compress_at_round and not state.get("compressed", False):
+    # Check if context compression is needed (triggers at round 5, 10, etc.)
+    compress_count = state.get("compress_count", 0)
+    next_compress_at = settings.compress_at_round * (compress_count + 1)
+    if state["round_count"] >= next_compress_at:
         return "compress"
 
     return "continue"
@@ -312,7 +314,7 @@ def compress_context(state: ReviewState) -> dict:
             early_tool_contents.append(msg.content)
 
     if not early_tool_contents:
-        return {"compressed": True}
+        return {"compress_count": state.get("compress_count", 0) + 1}
 
     # Call LLM to compress (cap input to prevent blowing context window)
     tool_results_text = "\n\n---\n\n".join(early_tool_contents)
@@ -341,7 +343,7 @@ def compress_context(state: ReviewState) -> dict:
         HumanMessage(content=compressed_human),
     ] + list(messages[recent_start:])
 
-    return {"messages": new_messages, "compressed": True}
+    return {"messages": new_messages, "compress_count": state.get("compress_count", 0) + 1}
 
 
 # ── Graph Assembly ─────────────────────────────────────
