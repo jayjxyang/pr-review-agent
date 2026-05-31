@@ -5,7 +5,12 @@ from langgraph.errors import GraphRecursionError
 
 
 class TestRunReviewReReview:
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -14,6 +19,7 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.get_pr_head_sha")
     def test_re_review_passes_prior_comments_to_graph(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         mock_sha.return_value = "newsha456"
         mock_last.return_value = {
@@ -42,7 +48,12 @@ class TestRunReviewReReview:
         assert invoke_args["prior_comments"] == mock_last.return_value["comments"]
         assert invoke_args["last_reviewed_sha"] == "oldsha123"
 
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -51,6 +62,7 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.get_pr_head_sha")
     def test_first_review_has_empty_prior_comments(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         mock_sha.return_value = "abc123"
         mock_last.return_value = None
@@ -72,7 +84,12 @@ class TestRunReviewReReview:
         assert invoke_args["prior_comments"] == []
         assert invoke_args["last_reviewed_sha"] == ""
 
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -81,6 +98,7 @@ class TestRunReviewReReview:
     @patch("app.tasks.review.get_pr_head_sha")
     def test_resolved_comments_are_persisted(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,  # noqa: E501
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         mock_sha.return_value = "newsha"
         mock_last.return_value = {
@@ -114,7 +132,12 @@ class TestRunReviewReReview:
 
 
 class TestRunReviewConfig:
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -123,6 +146,7 @@ class TestRunReviewConfig:
     @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
     def test_run_review_loads_config(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         """run_review loads repo config and passes it to the graph."""
         mock_config.return_value = {
@@ -155,7 +179,12 @@ class TestRunReviewConfig:
 
 
 class TestRunReviewResilience:
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -164,6 +193,7 @@ class TestRunReviewResilience:
     @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
     def test_graph_recursion_error_produces_degraded_result(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         """GraphRecursionError produces a degraded result instead of crashing."""
         mock_graph.return_value.invoke.side_effect = GraphRecursionError("recursion limit")
@@ -182,7 +212,12 @@ class TestRunReviewResilience:
         # Verify review was still posted
         mock_post.assert_called_once()
 
-    @patch("app.tasks.review.post_review")
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=None)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.post_review", return_value=[])
     @patch("app.tasks.review.save_review")
     @patch("app.tasks.review.resolve_comments")
     @patch("app.tasks.review.build_review_graph")
@@ -191,6 +226,7 @@ class TestRunReviewResilience:
     @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
     def test_graph_invoked_with_thread_id_config(
         self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve, mock_save, mock_post,
+        mock_scan, mock_feedback, mock_create, mock_update, mock_update_ids,
     ):
         """graph.invoke is called with a config containing thread_id for checkpointing."""
         mock_result = {
@@ -212,3 +248,107 @@ class TestRunReviewResilience:
         config = call_kwargs.kwargs.get("config")
         assert config is not None
         assert config["configurable"]["thread_id"] == "owner/repo:42:abc123"
+
+
+class TestRunReviewCheckRun:
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=42)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.save_review", return_value=1)
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_creates_and_updates_check_run(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve,
+        mock_save, mock_scan, mock_feedback, mock_create, mock_update,
+        mock_post, mock_update_ids,
+    ):
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 2, "total_input_tokens": 3000,
+            "traces": [],
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-check-run"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "org/repo", 42)
+
+        mock_create.assert_called_once_with("org/repo", "abc123")
+        mock_update.assert_called_once()
+        assert mock_update.call_args[0][1] == 42  # check_run_id
+
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=42)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan")
+    @patch("app.tasks.review.save_review", return_value=1)
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_secret_scan_forces_failure(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve,
+        mock_save, mock_scan, mock_feedback, mock_create, mock_update,
+        mock_post, mock_update_ids,
+    ):
+        mock_scan.return_value = [
+            {"filename": "config.py", "line": 5, "description": "AWS access key"},
+        ]
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 2, "total_input_tokens": 3000,
+            "traces": [],
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-secret-veto"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "org/repo", 42)
+
+        update_args = mock_update.call_args
+        assert update_args[0][2] == "failure"  # conclusion
+
+    @patch("app.tasks.review.update_github_comment_ids")
+    @patch("app.tasks.review.post_review", return_value=[])
+    @patch("app.tasks.review.update_check_run")
+    @patch("app.tasks.review.create_check_run", return_value=42)
+    @patch("app.tasks.review.collect_feedback")
+    @patch("app.tasks.review.run_secret_scan", return_value=[])
+    @patch("app.tasks.review.save_review", return_value=1)
+    @patch("app.tasks.review.resolve_comments")
+    @patch("app.tasks.review.build_review_graph")
+    @patch("app.tasks.review.get_last_review", return_value=None)
+    @patch("app.tasks.review.get_repo_config", return_value={})
+    @patch("app.tasks.review.get_pr_head_sha", return_value="abc123")
+    def test_collects_feedback_before_review(
+        self, mock_sha, mock_config, mock_last, mock_graph, mock_resolve,
+        mock_save, mock_scan, mock_feedback, mock_create, mock_update,
+        mock_post, mock_update_ids,
+    ):
+        mock_result = {
+            "risk_level": "low", "summary": "OK", "comments": [],
+            "escalated": False, "round_count": 2, "total_input_tokens": 3000,
+            "traces": [],
+        }
+        mock_graph.return_value.invoke.return_value = mock_result
+
+        mock_task = MagicMock()
+        mock_task.request.id = "test-feedback"
+        mock_task.request.retries = 0
+        from app.tasks.review import run_review
+        run_review.__wrapped__.__func__(mock_task, "org/repo", 42)
+
+        mock_feedback.assert_called_once_with("org/repo", 42)
