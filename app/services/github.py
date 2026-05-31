@@ -2,6 +2,7 @@ import fnmatch
 import requests
 from dataclasses import dataclass
 from functools import lru_cache
+import yaml
 
 from github import Github, GithubException
 
@@ -139,6 +140,23 @@ def get_pr_head_sha(repo_full_name: str, pr_number: int) -> str:
     gh = _github_client()
     pr = gh.get_repo(repo_full_name).get_pull(pr_number)
     return pr.head.sha
+
+
+def get_repo_config(repo_full_name: str, ref: str) -> dict:
+    """Fetch and parse .ai-review/config.yml from a repo.
+
+    Returns parsed dict, or {} on missing file / parse error.
+    """
+    try:
+        repo = _github_client().get_repo(repo_full_name)
+        content = repo.get_contents(".ai-review/config.yml", ref=ref)
+        return yaml.safe_load(content.decoded_content) or {}
+    except GithubException:
+        logger.debug("repo_config_not_found", repo=repo_full_name)
+        return {}
+    except yaml.YAMLError:
+        logger.warning("repo_config_invalid_yaml", repo=repo_full_name)
+        return {}
 
 
 def graphql_query(query: str, variables: dict) -> dict:
