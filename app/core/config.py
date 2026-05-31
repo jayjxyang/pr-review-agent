@@ -7,6 +7,12 @@ class Settings(BaseSettings):
 
     github_webhook_secret: str = ""
     github_app_token: str = ""
+
+    # GitHub App auth (takes precedence over PAT when set)
+    github_app_id: str | None = None
+    github_app_private_key_path: str | None = None
+    github_app_installation_id: str | None = None
+
     redis_url: str = "redis://localhost:6379/0"
     database_url: str = "postgresql://localhost:5432/pr_review"
 
